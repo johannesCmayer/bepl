@@ -171,12 +171,12 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
               help='The framerate of the input video.')
 @click.option('--audio-sr', type=int, default=0, show_default=True,
               help='The sample rate of the input audio. If set to 0 it is'
-                   'infered')
+                   'inferred.')
 @click.option('-r', '--screen-resolution', type=int, nargs=2,
               default=(1920, 1080),
               show_default=True,
               help='The resolution to display the video in.')
-@click.option('-r', '--input-resolution', type=int, nargs=2,
+@click.option('--input-resolution', type=int, nargs=2,
               default=(1920, 1080),
               show_default=True,
               help='The resolution of the input video file.')
@@ -204,6 +204,7 @@ def main(file, speed, start, frame_rate, audio_sr, screen_resolution,
            'pyaudio_instance': pyaudio_instance,
            }
     while True:
+        # TODO return the time where video was currently at
         new_cmd = play_from_pos(**cmd)
         cmd['play_from'] += 5
 
