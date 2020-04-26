@@ -1,5 +1,6 @@
 # Project
 .idea/
+playback_positions.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
