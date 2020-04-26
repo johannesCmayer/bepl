@@ -1,26 +1,34 @@
 import os
-
-import cv2 as cv
 import numpy as np
 import click
 import time
 import pygame
 import pygame.locals as pyloc
 import librosa as lr
-import sounddevice as sd
 import ffmpeg
 import logging
-from pyrubberband.pyrb import time_stretch
 import re
 import pyaudio
-from collections import namedtuple
 import subprocess
+from collections import namedtuple
+import threading
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
 playlog = log.getChild('playback')
 
-PlayArgs = namedtuple('PlayArgs', 'mouse_pos position_offset pause')
+
+class PlayArgs:
+    def __init__(self, mouse_pos, position_offset, speed, pause, exit):
+        self.speed = speed
+        self.exit = exit
+        self.pause = pause
+        self.mouse_pos = mouse_pos
+        self.position_offset = position_offset
+
+    def got_command(self):
+        return self.pause or self.mouse_pos or self.position_offset or \
+               self.exit
 
 
 # TODO when mouse click sikp to percent of video where percent is mause.x / screen.x
@@ -41,26 +49,30 @@ def handle_events():
     play_offset = None
     mouse_pos = None
     pause = None
+    exit = None
+    speed = None
     for event in events:
         if event.type == pyloc.QUIT:
-            pygame.display.quit()
-            exit(0)
+            exit = True
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
-                pygame.display.quit()
-                exit(0)
+                exit = True
             if event.key == pygame.K_SPACE:
                 pause = True
             if event.key == pygame.K_LEFT:
                 play_offset = -5
             elif event.key == pygame.K_RIGHT:
                 play_offset = 5
+            if event.key in [pygame.K_KP_PLUS, pygame.K_PLUS]:
+                speed = 2
+            elif event.key in [pygame.K_KP_MINUS, pygame.K_MINUS]:
+                speed = 1
         if event.type == pygame.MOUSEBUTTONDOWN:
             mouse_pos = pygame.mouse.get_pos()
         # elif event.type == pyloc.VIDEORESIZE:
         #     screen = pygame.display.set_mode(event.dict['size'], pyloc.RESIZABLE)
         #     screen_resolution = event.dict['size']
-    return PlayArgs(mouse_pos, play_offset, pause)
+    return PlayArgs(mouse_pos, play_offset, speed, pause, exit)
 
 
 def stats_surf():
@@ -76,7 +88,7 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
     read_proc = (
         ffmpeg
             .input(file, ss=play_from, loglevel=ffmpeg_loglevel)
-            .output('pipe:', format='rawvideo', pix_fmt='rgb24')
+            .output('pipe:', format='rawvideo', pix_fmt='rgb24', vf=f"scale={video_resolution[0]}:{video_resolution[1]}")
             .run_async(pipe_stdout=True)
     )
 
@@ -96,30 +108,34 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
     audio_iterator = lr.core.stream(audio_path, BLOCK_LENGTH, FRAME_LENGTH, 1,
                                     offset=play_from, fill_value=0)
 
-    shortening_timelength = BLOCK_LENGTH / audio_sr / speed
+
+    shortening_timelength = BLOCK_LENGTH / audio_sr / speed * speedup_silence
     l = []
     dropped = []
     AUDIO_THRESHHOLD = 0.1
 
     def callback(in_data, frame_count, time_info, status):
-        while len(l) < 4:
-            l.append(next(audio_iterator))
+        while len(l) < speedup_silence + 2:
+            try:
+                l.append(next(audio_iterator))
+            except StopIteration:
+                playlog.debug("Stopping audio playback stream end reached.")
+                return None, pyaudio.paComplete
 
-        if speedup_silence and not \
-                (np.max(l[0]) > AUDIO_THRESHHOLD or
-                 np.max(l[1]) > AUDIO_THRESHHOLD or
-                 np.max(l[2]) > AUDIO_THRESHHOLD or
-                 np.max(l[3]) > AUDIO_THRESHHOLD):
-            x = l.pop(0)
-            z = np.zeros(BLOCK_LENGTH)
+        if speedup_silence and \
+                not (np.array([np.max(x) for x in l]) > AUDIO_THRESHHOLD).any():
+            for _ in range(speedup_silence):
+                l.pop(0)
+            # l[0] = x * np.linspace(1, 0, BLOCK_LENGTH)
+            dropped.append(True)
             # INTERPOLATE_POINTS = 10
             # if INTERPOLATE_POINTS > 0:
             #     z[0:INTERPOLATE_POINTS] = np.linspace(x[0], 0, INTERPOLATE_POINTS)
             #     z[-INTERPOLATE_POINTS:] = np.linspace(0, l[0][-1], INTERPOLATE_POINTS)
             # l[0] = z * np.concatenate((x[::2], l[0][::2]))
             # data = l.pop()
-            data = z
-            dropped.append(True)
+        # else:
+        #     l[0] *= np.linspace(0, 1, BLOCK_LENGTH)
 
         if speed == 1:
             data = l.pop(0)
@@ -133,51 +149,66 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
 
         return data, pyaudio.paContinue
 
-    audio_out_stream = pyaudio_instance.open(format=pyaudio.paFloat32,
-                                             channels=1,
-                                             rate=audio_sr,
-                                             frames_per_buffer=BLOCK_LENGTH,
-                                             output=True,
-                                             stream_callback=callback
-                                             )
+    audio_out_stream = pyaudio_instance.open(
+        format=pyaudio.paFloat32,
+        channels=1,
+        rate=audio_sr,
+        frames_per_buffer=BLOCK_LENGTH,
+        output=True,
+        stream_callback=callback
+    )
+
+    def cleanup():
+        audio_out_stream.close()
+        audio_iterator.close()
+        read_proc.kill()
+
+    def video_position(curr_idx, frame_rate, play_from):
+        return curr_idx / frame_rate + play_from
 
     playlog.debug("starting playback")
     start_time = time.time()
     curr_idx = 0
     playback_offset = 0
+    curr2 = 0
     while True:
         ret = handle_events()
-        if any([x is not None for x in ret]):
-            audio_out_stream.close()
-            video_position = curr_idx / frame_rate + play_from
-            return video_position, ret
+        if ret.got_command():
+            cleanup()
+            video_position = video_position(curr_idx, frame_rate, play_from)
+            return False, video_position, ret
         playback_time = time.time() - start_time + playback_offset
-        # print(f'offset {playback_time}')
         playback_offset += shortening_timelength * len(dropped)
         dropped.clear()
-        # print(playback_offset)
 
         frame_idx = int(playback_time * frame_rate * speed)
-        while curr_idx <= frame_idx:
-            in_bytes = read_proc.stdout.read(v_width * v_height * 3)
+        # TODO Convert this to a seekable stream and use it to skip
+        while curr_idx < int(playback_time * frame_rate * speed):
+            read_proc.stdout.read(v_width * v_height * 3)
             curr_idx += 1
-            # print(f'curr_idx {curr_idx}, frame_idx {frame_idx}')
+        in_bytes = read_proc.stdout.read(v_width * v_height * 3)
+        curr_idx += 1
         if len(in_bytes) == 0:
             playlog.info("Steam empty, stopping playback")
-            break
+            cleanup()
+            video_position = video_position(curr_idx, frame_rate, play_from)
+            return True, video_position, ret
         in_frame = (
             np
-                .frombuffer(in_bytes, np.uint8)
-                .reshape([v_height, v_width, 3])
+            .frombuffer(in_bytes, np.uint8)
+            .reshape([v_height, v_width, 3])
+            .transpose([1,0,2])
         )
-        frame_surf = pygame.surfarray.make_surface(
-            np.transpose(in_frame, [1, 0, 2]))
-        pygame.transform.scale(frame_surf, screen_resolution, screen)
+        frame_surf = pygame.surfarray.make_surface(in_frame)
+        if video_resolution == screen_resolution:
+            screen.blit(frame_surf, (0,0))
+        else:
+            pygame.transform.scale(frame_surf, screen_resolution, screen)
         # TODO implement stats display
         # screen.blit(stats_surf(), (0, 0))
         pygame.display.flip()
 
-    audio_out_stream.close()
+    raise Exception("Invalid programm state")
 
 
 def get_file_resolution(file):
@@ -219,9 +250,9 @@ def get_file_length(file):
               help='The resolution to display the video in.')
 @click.option('--input-resolution', type=int, nargs=2,
               help='The resolution of the input video file.')
-@click.option('-b', '--speedup-silence', is_flag=True, default=True,
+@click.option('-b', '--speedup-silence', default=3, type=int,
               show_default=True,
-              help="Should prats of the video containing silence be sped up.")
+              help="How much faster to play silence.")
 @click.option('--ffmpeg-loglevel', default='warning', show_default=True,
               help="Set the loglevel of ffmpeg.")
 def main(file, speed, start, frame_rate, audio_sr, screen_resolution,
@@ -251,21 +282,24 @@ def main(file, speed, start, frame_rate, audio_sr, screen_resolution,
            }
     while True:
         # TODO return the time where video was currently at
-        vid_pos, new_cmd = play_from_pos(**cmd)
+        stream_ended, vid_pos, new_cmd = play_from_pos(**cmd)
+        if new_cmd.exit:
+            break
         cmd['play_from'] = vid_pos
+        if new_cmd.pause:
+            while True:
+                new_cmd = handle_events()
+                if new_cmd.got_command():
+                    break
         if new_cmd.position_offset:
             cmd['play_from'] = \
                 np.clip(vid_pos + new_cmd.position_offset, 0, input_length)
         if new_cmd.mouse_pos:
             cmd['play_from'] = \
                 new_cmd.mouse_pos[0] / screen_resolution[0] * input_length
-        if new_cmd.pause:
-            while True:
-                new_new_cmd = handle_events()
-                if new_new_cmd.pause:
-                    break
 
     pyaudio_instance.terminate()
+    pygame.display.quit()
 
 
 if __name__ == '__main__':
