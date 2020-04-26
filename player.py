@@ -40,6 +40,7 @@ class PlayArgs:
 # TODO make it that it works for audiofiles
 # TODO Report when closed how much time was saved compared to watching the
 #  video normally (display savings from silence skipping and speedup)
+# TODO cerate command line documentation on controlls in window
 # NICE you can stream youtube videos
 
 
