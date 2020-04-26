@@ -89,7 +89,7 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
         read_proc = (
             ffmpeg
                 .input(file, ss=ss, loglevel=ffmpeg_loglevel)
-                .output('pipe:', format='rawvideo', pix_fmt='rgb24', vf=f"scale={video_resolution[0]}:{video_resolution[1]}")
+                .output('pipe:', format='rawvideo', pix_fmt='rgb24')
                 .run_async(pipe_stdout=True)
         )
         return read_proc
