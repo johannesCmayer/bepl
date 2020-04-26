@@ -85,12 +85,16 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
                   ffmpeg_loglevel):
     playlog.debug("Starting video stream.")
     v_width, v_height = video_resolution
-    read_proc = (
-        ffmpeg
-            .input(file, ss=play_from, loglevel=ffmpeg_loglevel)
-            .output('pipe:', format='rawvideo', pix_fmt='rgb24', vf=f"scale={video_resolution[0]}:{video_resolution[1]}")
-            .run_async(pipe_stdout=True)
-    )
+    def create_read_file_proc(ss):
+        read_proc = (
+            ffmpeg
+                .input(file, ss=ss, loglevel=ffmpeg_loglevel)
+                .output('pipe:', format='rawvideo', pix_fmt='rgb24', vf=f"scale={video_resolution[0]}:{video_resolution[1]}")
+                .run_async(pipe_stdout=True)
+        )
+        return read_proc
+
+    read_proc = create_read_file_proc(play_from)
 
     audio_path = re.sub("\..*$", '.wav', file)
     if not os.path.isfile(audio_path):
@@ -125,8 +129,8 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
         if speedup_silence and \
                 not (np.array([np.max(x) for x in l]) > AUDIO_THRESHHOLD).any():
             for _ in range(speedup_silence):
-                l.pop(0)
-            # l[0] = x * np.linspace(1, 0, BLOCK_LENGTH)
+                l.pop(1)
+            # l[0] = l[0] * np.linspace(1, 0, BLOCK_LENGTH)
             dropped.append(True)
             # INTERPOLATE_POINTS = 10
             # if INTERPOLATE_POINTS > 0:
@@ -134,8 +138,9 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
             #     z[-INTERPOLATE_POINTS:] = np.linspace(0, l[0][-1], INTERPOLATE_POINTS)
             # l[0] = z * np.concatenate((x[::2], l[0][::2]))
             # data = l.pop()
-        # else:
-        #     l[0] *= np.linspace(0, 1, BLOCK_LENGTH)
+
+            # l[0] *= np.linspace(1, 0, BLOCK_LENGTH)
+
 
         if speed == 1:
             data = l.pop(0)
@@ -260,6 +265,7 @@ def main(file, speed, start, frame_rate, audio_sr, screen_resolution,
     pyaudio_instance = pyaudio.PyAudio()
     pygame.init()
     screen = pygame.display.set_mode(screen_resolution)
+    pygame.display.set_caption('bepl')
 
     if not audio_sr:
         audio_sr = lr.get_samplerate(file)
