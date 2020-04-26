@@ -33,9 +33,11 @@ class PlayArgs:
 
 
 # TODO create timeline
+# TODO show current video time
 # TODO  show remaining video runtime (with speedup and approximate frame drop
 #  time saving)
-# TODO Fix audiodistortions on speedup
+# TODO Fix audiodistortions on speedup: possibly it happens because no sound
+#   is at value 0.5 and not 0
 # TODO allow fractional speed
 # TODO make it that it works for audiofiles
 # TODO Report when closed how much time was saved compared to watching the
@@ -246,7 +248,8 @@ def get_file_length(file):
 @click.option('-s', '--speed', type=float, default=2, show_default=True,
               help='How fast to playback.')
 @click.option('--play-from', type=int, default=None, show_default=True,
-              help='Where to start playback in seconds.')
+              help='Where to start playback in seconds. Overwrites loaded'
+                   'playback location.')
 @click.option('--frame-rate', type=int, default=20, show_default=True,
               help='The framerate to play the video back at. Low values '
                    'improve performance.')
@@ -277,7 +280,7 @@ def main(file, speed, play_from, frame_rate, screen_resolution,
     log.debug(f'Video resolution infered {input_resolution}')
     input_length = get_file_length(file)
 
-    if not play_from:
+    if not play_from and not no_save_pos:
         play_from = load_playback_pos(VIDEO_PLAYBACK_SAVE_FILE, file)
 
     cmd = {'file': file,
