@@ -79,22 +79,34 @@ def stats_surf():
     pass
 
 
+def create_ffmpeg_video_stream(file, ss, ffmpeg_loglevel, frame_rate):
+    read_proc = (
+        ffmpeg
+            .input(file, ss=ss, loglevel=ffmpeg_loglevel)
+            .output('pipe:', format='rawvideo', pix_fmt='rgb24', r=frame_rate)
+            .run_async(pipe_stdout=True)
+    )
+    return read_proc
+
+def create_ffmpeg_audio_stream(file, ss, ffmpeg_loglevel):
+    read_proc = (
+        ffmpeg
+            .input(file, ss=ss, loglevel=ffmpeg_loglevel)
+            .output('pipe:', format='f32le', acodec='pcm_f32le')
+            .run_async(pipe_stdout=True)
+    )
+    return read_proc
+
 def play_from_pos(file, screen, screen_resolution, video_resolution,
                   pyaudio_instance, audio_sr,
                   frame_rate, speed, play_from, speedup_silence,
                   ffmpeg_loglevel):
     playlog.debug("Starting video stream.")
     v_width, v_height = video_resolution
-    def create_read_file_proc(ss):
-        read_proc = (
-            ffmpeg
-                .input(file, ss=ss, loglevel=ffmpeg_loglevel)
-                .output('pipe:', format='rawvideo', pix_fmt='rgb24')
-                .run_async(pipe_stdout=True)
-        )
-        return read_proc
 
-    read_proc = create_read_file_proc(play_from)
+    video_stream = create_ffmpeg_video_stream(file, play_from, ffmpeg_loglevel,
+                                              frame_rate)
+    audio_stream = create_ffmpeg_audio_stream(file, play_from, ffmpeg_loglevel)
 
     audio_path = re.sub("\..*$", '.wav', file)
     if not os.path.isfile(audio_path):
@@ -112,22 +124,23 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
     audio_iterator = lr.core.stream(audio_path, BLOCK_LENGTH, FRAME_LENGTH, 1,
                                     offset=play_from, fill_value=0)
 
-
-    shortening_timelength = BLOCK_LENGTH / audio_sr / speed * speedup_silence
+    shortening_timelength = BLOCK_LENGTH / audio_sr / speed * speedup_silence / 2
     l = []
     dropped = []
     AUDIO_THRESHHOLD = 0.1
 
-    def callback(in_data, frame_count, time_info, status):
+    def callback_ff(in_data, frame_count, time_info, status):
         while len(l) < speedup_silence + 2:
-            try:
-                l.append(next(audio_iterator))
-            except StopIteration:
+            data = audio_stream.stdout.read(BLOCK_LENGTH * 4)
+            if len(data) == 0:
                 playlog.debug("Stopping audio playback stream end reached.")
                 return None, pyaudio.paComplete
+            data = np.frombuffer(data, np.float32)
+            l.append(data)
 
         if speedup_silence and \
-                not (np.array([np.max(x) for x in l]) > AUDIO_THRESHHOLD).any():
+                not (np.array(
+                    [np.max(x) for x in l]) > AUDIO_THRESHHOLD).any():
             for _ in range(speedup_silence):
                 l.pop(1)
             # l[0] = l[0] * np.linspace(1, 0, BLOCK_LENGTH)
@@ -141,6 +154,40 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
 
             # l[0] *= np.linspace(1, 0, BLOCK_LENGTH)
 
+        if speed == 1:
+            data = l.pop(0)
+        elif speed == 2:
+            x1 = l.pop(0)
+            x2 = l.pop(0)
+            arr = np.concatenate((x1, x2))
+            data = lr.effects.time_stretch(arr, speed, center=False)
+        else:
+            raise Exception("Only 2 and 1 are currently supported speeds.")
+        return data, pyaudio.paContinue
+
+    def callback(in_data, frame_count, time_info, status):
+        while len(l) < speedup_silence + 2:
+            try:
+                l.append(next(audio_iterator))
+            except StopIteration:
+                playlog.debug("Stopping audio playback stream end reached.")
+                return None, pyaudio.paComplete
+
+        if speedup_silence and \
+                not (np.array(
+                    [np.max(x) for x in l]) > AUDIO_THRESHHOLD).any():
+            for _ in range(speedup_silence):
+                l.pop(1)
+            # l[0] = l[0] * np.linspace(1, 0, BLOCK_LENGTH)
+            dropped.append(True)
+            # INTERPOLATE_POINTS = 10
+            # if INTERPOLATE_POINTS > 0:
+            #     z[0:INTERPOLATE_POINTS] = np.linspace(x[0], 0, INTERPOLATE_POINTS)
+            #     z[-INTERPOLATE_POINTS:] = np.linspace(0, l[0][-1], INTERPOLATE_POINTS)
+            # l[0] = z * np.concatenate((x[::2], l[0][::2]))
+            # data = l.pop()
+
+            # l[0] *= np.linspace(1, 0, BLOCK_LENGTH)
 
         if speed == 1:
             data = l.pop(0)
@@ -152,21 +199,22 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
         else:
             raise Exception("Only 2 and 1 are currently supported speeds.")
 
+        print(len(data), BLOCK_LENGTH)
         return data, pyaudio.paContinue
 
     audio_out_stream = pyaudio_instance.open(
         format=pyaudio.paFloat32,
         channels=1,
-        rate=audio_sr,
+        rate=audio_sr*2,
         frames_per_buffer=BLOCK_LENGTH,
         output=True,
-        stream_callback=callback
+        stream_callback=callback_ff
     )
 
     def cleanup():
         audio_out_stream.close()
         audio_iterator.close()
-        read_proc.kill()
+        video_stream.kill()
 
     def video_position(curr_idx, frame_rate, play_from):
         return curr_idx / frame_rate + play_from
@@ -187,11 +235,12 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
         dropped.clear()
 
         frame_idx = int(playback_time * frame_rate * speed)
-        # TODO Convert this to a seekable stream and use it to skip
-        while curr_idx < int(playback_time * frame_rate * speed):
-            read_proc.stdout.read(v_width * v_height * 3)
+        if curr_idx >= frame_idx:
+            continue
+        while curr_idx < frame_idx:
+            video_stream.stdout.read(v_width * v_height * 3)
             curr_idx += 1
-        in_bytes = read_proc.stdout.read(v_width * v_height * 3)
+        in_bytes = video_stream.stdout.read(v_width * v_height * 3)
         curr_idx += 1
         if len(in_bytes) == 0:
             playlog.info("Steam empty, stopping playback")
@@ -200,13 +249,13 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
             return True, video_position, ret
         in_frame = (
             np
-            .frombuffer(in_bytes, np.uint8)
-            .reshape([v_height, v_width, 3])
-            .transpose([1,0,2])
+                .frombuffer(in_bytes, np.uint8)
+                .reshape([v_height, v_width, 3])
+                .transpose([1, 0, 2])
         )
         frame_surf = pygame.surfarray.make_surface(in_frame)
         if video_resolution == screen_resolution:
-            screen.blit(frame_surf, (0,0))
+            screen.blit(frame_surf, (0, 0))
         else:
             pygame.transform.scale(frame_surf, screen_resolution, screen)
         # TODO implement stats display
@@ -245,33 +294,32 @@ def get_file_length(file):
               help='How fast to playback.')
 @click.option('--start', type=int, default=0, show_default=True,
               help='Where to start playback in seconds.')
-@click.option('--frame-rate', type=int, default=60, show_default=True,
-              help='The framerate of the input video.')
+@click.option('--frame-rate', type=int, default=15, show_default=True,
+              help='The framerate to play the video back at. Low values are'
+                   'much better for performance.')
 @click.option('--audio-sr', type=int,
               help='The sample rate of the input audio. Infered when not set.')
 @click.option('-r', '--screen-resolution', type=int, nargs=2,
               default=(1920, 1080),
               show_default=True,
               help='The resolution to display the video in.')
-@click.option('--input-resolution', type=int, nargs=2,
-              help='The resolution of the input video file.')
 @click.option('-b', '--speedup-silence', default=3, type=int,
               show_default=True,
               help="How much faster to play silence.")
 @click.option('--ffmpeg-loglevel', default='warning', show_default=True,
               help="Set the loglevel of ffmpeg.")
 def main(file, speed, start, frame_rate, audio_sr, screen_resolution,
-         input_resolution, speedup_silence, ffmpeg_loglevel):
+         speedup_silence, ffmpeg_loglevel):
     pyaudio_instance = pyaudio.PyAudio()
     pygame.init()
-    screen = pygame.display.set_mode(screen_resolution)
+    screen = pygame.display.set_mode(screen_resolution, pygame.RESIZABLE)
     pygame.display.set_caption('bepl')
 
     if not audio_sr:
         audio_sr = lr.get_samplerate(file)
-        log.info(f'Audio sample-rate of {audio_sr} inferred.')
-    if not input_resolution:
-        input_resolution = get_file_resolution(file)
+        log.debug(f'Audio sample-rate of {audio_sr} inferred.')
+    input_resolution = get_file_resolution(file)
+    log.debug(f'Video resolution infered {input_resolution}')
     input_length = get_file_length(file)
 
     cmd = {'file': file,
