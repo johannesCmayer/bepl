@@ -7,7 +7,7 @@ By default the player saves the playback position of videos and resumes at the s
 
 This player can read a transport stream (ts) files while they are is being written and should be able to read all video file formats that are supported by ffmpeg.
 
-The player is very resource intensive. Performance issues might be resolved by lowering the framerate.
+The player is very resource intensive. Performance issues might be resolved by lowering the playback framerate.
 
 ## Command line help
 ```
