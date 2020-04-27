@@ -33,17 +33,14 @@ class PlayArgs:
                self.exit or self.speed or self.window_size
 
 
-# TODO create timeline
-# TODO show current video time
-# TODO  show remaining video runtime (with speedup and approximate frame drop
-#  time saving)
-# TODO Fix audiodistortions on speedup: possibly it happens because no sound
-#   is at value 0.5 and not 0
+# TODO resisable window
+# TODO Make it so that you can install via pip (the executable) (use setuptools? look at click documentation)
+# TODO create tests for different file types
+# FIXME Fix audiodistortions when skipping audio
 # TODO allow fractional speed
 # TODO make it that it works for audiofiles
-# TODO Report when closed how much time was saved compared to watching the
-#  video normally (display savings from silence skipping and speedup)
 # TODO cerate command line documentation on controlls in window
+# TODO add speed modifiers in timeline
 # IFNEEDED create audio syncpoints. Prestart new audio and video streams
 #  (or only one of them) and then switch to them at a specific sync point
 #  (some point in time)
@@ -56,6 +53,7 @@ class EventManager:
         self.exit = None
         self.time_last_mouse_move = 0
         self.last_mouse_pos = None
+        self.last_vid_resize = None
 
     def set_exit(self, signum, frame):
         self.exit = True
@@ -64,11 +62,11 @@ class EventManager:
     def handle_events(self):
         events = pygame.event.get()
         play_offset = None
-        mouse_pos = None
         pause = None
         speed = None
         window_size = None
         mouse_button = None
+        screen_adjusted = False
         mouse_pos = pygame.mouse.get_pos()
         if mouse_pos != self.last_mouse_pos:
             self.last_mouse_pos = mouse_pos
@@ -94,30 +92,18 @@ class EventManager:
                     speed = 1
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mouse_button = True
-            elif event.type == pyloc.VIDEORESIZE:
-                window_size = event.dict['size']
-        return PlayArgs(mouse_pos if mouse_button else None, play_offset, window_size, speed, pause,
+            if event.type == pyloc.VIDEORESIZE:
+                self.last_vid_resize = event.dict['size']
+                screen_adjusted = True
+                print(f'resize: {self.last_vid_resize}')
+
+        if not screen_adjusted and self.last_vid_resize:
+            window_size = self.last_vid_resize
+            self.last_vid_resize = None
+        pygame.display.flip()
+        return PlayArgs(mouse_pos if mouse_button else None, play_offset,
+                        window_size, speed, pause,
                         self.exit)
-
-
-def stats_surf(playbar_offset_pix, screen_resolution, playbacktime, total_media_length):
-    x, y = screen_resolution[0], screen_resolution[1] // 20
-    pos = screen_resolution[0] - x, screen_resolution[1] - y
-    surf = pygame.Surface((x, y))
-    surf.set_alpha(150)
-    # pygame.draw.rect(surf, (0, 0, 0), pygame.Rect(0, 0, x, y))
-    PLAYBAR_OFFSET = (1, 1)
-    ratio_played = playbacktime / total_media_length
-    outline = pygame.Rect(x*(1-PLAYBAR_OFFSET[0]) + playbar_offset_pix[0],
-                       y*(1-PLAYBAR_OFFSET[1]) + playbar_offset_pix[1],
-                       (x *PLAYBAR_OFFSET[0] - playbar_offset_pix[0] * 2),
-                       y*PLAYBAR_OFFSET[1] - playbar_offset_pix[1] * 2)
-    progress = outline.copy()
-    progress.width = outline.width * ratio_played
-    a = 50
-    pygame.draw.rect(surf, (a, a, a), outline, 2)
-    pygame.draw.rect(surf, (255, 255, 255), progress)
-    return surf, pos
 
 
 class AudioPlayer:
@@ -167,8 +153,7 @@ class AudioPlayer:
                      self.buffer]) > self.AUDIO_THRESHHOLD).any():
             for _ in range(self.speedup_silence):
                 x = self.buffer.pop(1)
-            # buffer[0] = np.array(buffer[0])
-            # buffer[0] += x
+            # lr.effects.time_stretch(np.concatenate(), self.speed, center=False)
             self.n_droped[0] += 1
 
         if self.speed == 1:
@@ -185,6 +170,52 @@ class AudioPlayer:
     def close(self):
         self.audio_out_stream.close()
         self.audio_stream.kill()
+
+
+def sec_to_time_str(x):
+    m, s = divmod(x, 60)
+    h, m = divmod(m, 60)
+    return f'{int(h):02}:{int(m):02}:{int(s):02}'
+
+
+def get_stats_surf(playbar_offset_pix, screen_resolution, playbacktime,
+                   total_media_length, speed):
+    FONT_SIZE = 20
+    FONT_COLOR = (200, 200, 200)
+    font = pygame.font.SysFont(None, FONT_SIZE)
+
+    x, y = screen_resolution[0], 1080 // 20
+    pos = screen_resolution[0] - x, screen_resolution[1] - y
+    surf = pygame.Surface((x, y))
+    surf.set_alpha(200)
+    ratio_played = playbacktime / total_media_length
+    outline = pygame.Rect(playbar_offset_pix[0], playbar_offset_pix[1],
+                          x - playbar_offset_pix[0] * 2,
+                          y - playbar_offset_pix[1] * 2)
+    progress = outline.copy()
+    progress.width = outline.width * ratio_played
+    OUTLINE_THICKNESS = 2
+    outline.height -= OUTLINE_THICKNESS / 2
+    outline.width -= OUTLINE_THICKNESS / 2
+    a = 50
+    pygame.draw.rect(surf, (a, a, a), outline, OUTLINE_THICKNESS)
+    pygame.draw.rect(surf, (255, 255, 255), progress)
+
+
+    # TIMINGS
+    PADING = 3
+    text = font.render(f' {sec_to_time_str(playbacktime)}', True, FONT_COLOR)
+    surf.blit(text, (PADING, PADING))
+
+    time_remaining = sec_to_time_str(
+        (total_media_length - playbacktime) / speed)
+    text = font.render(f'-{time_remaining}', True, FONT_COLOR)
+    surf.blit(text, (PADING, y / 2 - PADING - FONT_SIZE / 5))
+
+    text = font.render(f' {sec_to_time_str(total_media_length)}', True,
+                       FONT_COLOR)
+    surf.blit(text, (PADING, y - PADING - FONT_SIZE / 1.5))
+    return surf, pos
 
 
 def create_ffmpeg_video_stream(file, ss, ffmpeg_loglevel, frame_rate):
@@ -210,7 +241,8 @@ def create_ffmpeg_audio_stream(file, ss, ffmpeg_loglevel):
 def play_from_pos(file, screen, screen_resolution, video_resolution,
                   pyaudio_instance, audio_sr,
                   frame_rate, speed, play_from, speedup_silence,
-                  ffmpeg_loglevel, event_manager, input_length, playbar_offset_pix):
+                  ffmpeg_loglevel, event_manager, input_length,
+                  playbar_offset_pix):
     v_width, v_height = video_resolution
     playlog.debug("Starting video stream.")
     video_stream = create_ffmpeg_video_stream(file, play_from, ffmpeg_loglevel,
@@ -261,13 +293,14 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
                 .transpose([1, 0, 2])
         )
         frame_surf = pygame.surfarray.make_surface(in_frame)
-        if not video_resolution == screen_resolution:
-            frame_surf = pygame.transform.scale(frame_surf, screen_resolution)
+        # if not video_resolution == screen_resolution:
+        frame_surf = pygame.transform.scale(frame_surf, screen_resolution)
         screen.blit(frame_surf, (0, 0))
         if time.time() - event_manager.time_last_mouse_move < 2:
-            stats_surf1, pos = stats_surf(playbar_offset_pix, screen_resolution, video_position,
-                                          input_length)
-            screen.blit(stats_surf1, pos)
+            stats_surf, pos = get_stats_surf(playbar_offset_pix,
+                                             screen_resolution, video_position,
+                                             input_length, speed)
+            screen.blit(stats_surf, pos)
         pygame.display.flip()
 
     raise Exception("Invalid programm state")
@@ -327,7 +360,8 @@ def main(file, speed, play_from, frame_rate, screen_resolution,
     log.debug(f'Video pos save file {VIDEO_PLAYBACK_SAVE_FILE}')
     pyaudio_instance = pyaudio.PyAudio()
     pygame.init()
-    screen = pygame.display.set_mode(screen_resolution, pygame.RESIZABLE)
+    screen = pygame.display.set_mode(screen_resolution,
+                                     pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE)
     pygame.display.set_caption('bepl')
 
     audio_sr = lr.get_samplerate(file)
@@ -339,10 +373,9 @@ def main(file, speed, play_from, frame_rate, screen_resolution,
     if not play_from and not no_save_pos:
         play_from = load_playback_pos(VIDEO_PLAYBACK_SAVE_FILE, file)
 
+    PLAYBAR_OFFSET_PIX = (70, 10)
 
-    PLAYBAR_OFFSET_PIX = (10, 10)
-
-    event_manager = EventManager(PLAYBAR_OFFSET_PIX)
+    event_manager = EventManager()
 
     cmd = {'file': file,
            'screen': screen,
@@ -372,11 +405,8 @@ def main(file, speed, play_from, frame_rate, screen_resolution,
                 if new_cmd.got_command():
                     break
         if new_cmd.window_size:
-            cmd['screen_resolution'] = new_cmd.window_size
-            screen = pygame.display.set_mode(screen_resolution,
-                                             pygame.RESIZABLE)
-            cmd['screen'] = screen
-            print(cmd['screen_resolution'])
+            screen_resolution = new_cmd.window_size
+            cmd['screen_resolution'] = screen_resolution
         if new_cmd.speed:
             cmd['speed'] = new_cmd.speed
         if new_cmd.position_offset:
@@ -384,7 +414,8 @@ def main(file, speed, play_from, frame_rate, screen_resolution,
                 np.clip(vid_pos + new_cmd.position_offset, 0, input_length)
         if new_cmd.mouse_pos:
             zeroed = new_cmd.mouse_pos[0] - PLAYBAR_OFFSET_PIX[0]
-            scaled = zeroed / (screen_resolution[0] - PLAYBAR_OFFSET_PIX[0] * 2)
+            scaled = zeroed / (
+                    screen_resolution[0] - PLAYBAR_OFFSET_PIX[0] * 2)
             cmd['play_from'] = np.clip(scaled * input_length,
                                        0,
                                        input_length - 0.5)
