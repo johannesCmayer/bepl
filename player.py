@@ -343,6 +343,10 @@ def get_file_length(file):
                 type=click.Path(True, dir_okay=False, resolve_path=True))
 @click.option('-s', '--speed', type=float, default=2, show_default=True,
               help='How fast to playback.')
+@click.option('-b', '--speedup-silence', default=10, type=int,
+              show_default=True,
+              help="How much faster to play silence. This is in addition to "
+                   "speedup specified with --speed.")
 @click.option('--play-from', type=int, default=None, show_default=True,
               help='Where to start playback in seconds. Overwrites loaded '
                    'playback location.')
@@ -358,10 +362,6 @@ def get_file_length(file):
               default=(1920, 1080),
               show_default=True,
               help='The maximum resolution that the screen can take.')
-@click.option('-b', '--speedup-silence', default=10, type=int,
-              show_default=True,
-              help="How much faster to play silence. This is in addition to "
-                   "speedup specified with --speed.")
 @click.option('--no-save-pos', is_flag=True,
               help='Disable loading and saving of the playback position.')
 @click.option('--ffmpeg-loglevel', default='warning', show_default=True,
