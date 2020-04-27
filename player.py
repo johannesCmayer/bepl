@@ -37,10 +37,15 @@ class PlayArgs:
 # TODO make it so that you can only scrub through the timeline when you are on it
 # TODO make it so that the sime of a point on the progressbar is displayed when
 #  you hover over the progressbar
+# TODO enable selection of which audiotrack to play
 # TODO Make it so that you can install via pip (the executable)
 #  (use setuptools? look at click documentation)
 # TODO create tests for different file types
 # FIXME Fix audiodistortions when skipping audio
+# FIXME when reaching the end of a .ts file that is currently being written
+#  the video resets to the positon of the play_from parameter play_from_pos
+#  was invoked with. This happens when the speed is 2 and the difference
+#  between video_positon and length_of_file is too close.
 # TODO allow fractional speed
 # TODO make it that it works for audiofiles
 # TODO cerate command line documentation on controlls in window
@@ -267,7 +272,8 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
     while True:
         ret = event_manager.handle_events()
         video_position = get_video_position(curr_idx, frame_rate, play_from)
-        input_length = max(input_length, video_position)
+        if video_position > input_length:
+            input_length = get_file_length(file)
         if ret.got_command():
             cleanup()
             return False, video_position, ret
