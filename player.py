@@ -33,8 +33,12 @@ class PlayArgs:
                self.exit or self.speed or self.window_size
 
 
-# TODO resisable window
-# TODO Make it so that you can install via pip (the executable) (use setuptools? look at click documentation)
+# TODO make it so that you can see the playbar always without resizing
+# TODO make it so that you can only scrub through the timeline when you are on it
+# TODO make it so that the sime of a point on the progressbar is displayed when
+#  you hover over the progressbar
+# TODO Make it so that you can install via pip (the executable)
+#  (use setuptools? look at click documentation)
 # TODO create tests for different file types
 # FIXME Fix audiodistortions when skipping audio
 # TODO allow fractional speed
@@ -123,7 +127,7 @@ class AudioPlayer:
         self.AUDIO_THRESHHOLD = 0.1
 
         self.buffer = []
-        self.n_droped = [0]
+        self.n_droped = 0
 
         self.audio_stream = create_ffmpeg_audio_stream(file, play_from,
                                                        ffmpeg_loglevel)
@@ -133,11 +137,11 @@ class AudioPlayer:
             rate=audio_sr * 2,
             frames_per_buffer=self.BLOCK_LENGTH,
             output=True,
-            stream_callback=self.callback_ff
+            stream_callback=self._callback_ff
         )
         playlog.debug('Audioplayer started')
 
-    def callback_ff(self, in_data, frame_count, time_info, status):
+    def _callback_ff(self, in_data, frame_count, time_info, status):
         while len(self.buffer) < self.speedup_silence + 2:
             data = self.audio_stream.stdout.read(self.BLOCK_LENGTH * 4)
             if len(data) == 0:
@@ -147,14 +151,11 @@ class AudioPlayer:
             data = np.frombuffer(data, np.float32)
             self.buffer.append(data)
 
-        if self.speedup_silence and \
-                not (np.array(
-                    [np.max(x) for x in
-                     self.buffer]) > self.AUDIO_THRESHHOLD).any():
+        max_values = np.array([np.max(np.abs(x)) for x in self.buffer])
+        if (max_values < self.AUDIO_THRESHHOLD).all():
             for _ in range(self.speedup_silence):
                 x = self.buffer.pop(1)
-            # lr.effects.time_stretch(np.concatenate(), self.speed, center=False)
-            self.n_droped[0] += 1
+            self.n_droped += 1
 
         if self.speed == 1:
             data = self.buffer.pop(0)
@@ -266,13 +267,14 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
     while True:
         ret = event_manager.handle_events()
         video_position = get_video_position(curr_idx, frame_rate, play_from)
+        input_length = max(input_length, video_position)
         if ret.got_command():
             cleanup()
             return False, video_position, ret
         playback_time = time.time() - start_time + playback_offset
         playback_offset += audio_player.AUDIO_DROP_SKIP_DURATION * \
-                           audio_player.n_droped[0]
-        audio_player.n_droped[0] = 0
+                           audio_player.n_droped
+        audio_player.n_droped = 0
 
         frame_idx = int(playback_time * frame_rate * speed)
         if curr_idx >= frame_idx:
@@ -328,7 +330,12 @@ def get_file_length(file):
                         "default=noprint_wrappers=1:nokey=1", file],
                        stdout=subprocess.PIPE,
                        stderr=subprocess.STDOUT)
-    return float(r.stdout)
+    try:
+        return float(r.stdout)
+    except Exception as e:
+        log.error("Could not extract file length.")
+        raise
+
 
 
 @click.command()
@@ -337,18 +344,19 @@ def get_file_length(file):
 @click.option('-s', '--speed', type=float, default=2, show_default=True,
               help='How fast to playback.')
 @click.option('--play-from', type=int, default=None, show_default=True,
-              help='Where to start playback in seconds. Overwrites loaded'
+              help='Where to start playback in seconds. Overwrites loaded '
                    'playback location.')
-@click.option('--frame-rate', type=int, default=20, show_default=True,
+@click.option('--frame-rate', type=int, default=15, show_default=True,
               help='The framerate to play the video back at. Low values '
                    'improve performance.')
 @click.option('-r', '--screen-resolution', type=int, nargs=2,
               default=(1920, 1080),
               show_default=True,
-              help='The resolution to display the video in.')
-@click.option('-b', '--speedup-silence', default=3, type=int,
+              help='The maximum resolution that the screen can take.')
+@click.option('-b', '--speedup-silence', default=10, type=int,
               show_default=True,
-              help="How much faster to play silence.")
+              help="How much faster to play silence. This is in addition to "
+                   "speedup specified with --speed.")
 @click.option('--no-save-pos', is_flag=True,
               help='Disable loading and saving of the playback position.')
 @click.option('--ffmpeg-loglevel', default='warning', show_default=True,
@@ -362,13 +370,14 @@ def main(file, speed, play_from, frame_rate, screen_resolution,
     pygame.init()
     screen = pygame.display.set_mode(screen_resolution,
                                      pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE)
-    pygame.display.set_caption('bepl')
+    pygame.display.set_caption(f'bepl {file}')
 
     audio_sr = lr.get_samplerate(file)
     log.debug(f'Audio sample-rate of {audio_sr} inferred.')
     input_resolution = get_file_resolution(file)
     log.debug(f'Video resolution infered {input_resolution}')
     input_length = get_file_length(file)
+    n_input_length = None
 
     if not play_from and not no_save_pos:
         play_from = load_playback_pos(VIDEO_PLAYBACK_SAVE_FILE, file)
@@ -393,7 +402,17 @@ def main(file, speed, play_from, frame_rate, screen_resolution,
            'playbar_offset_pix': PLAYBAR_OFFSET_PIX
            }
     while True:
-        stream_ended, vid_pos, new_cmd = play_from_pos(**cmd)
+        while True:
+            stream_ended, vid_pos, new_cmd = play_from_pos(**cmd)
+            n_input_length = get_file_length(file)
+            if not stream_ended or input_length == n_input_length:
+                input_length = n_input_length
+                cmd['input_length'] = input_length
+                break
+            else:
+                input_length = n_input_length
+                cmd['input_length'] = input_length
+
         if new_cmd.exit:
             if not no_save_pos:
                 save_playback_pos(VIDEO_PLAYBACK_SAVE_FILE, file, vid_pos)
