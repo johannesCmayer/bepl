@@ -349,7 +349,12 @@ def get_file_length(file):
 @click.option('--frame-rate', type=int, default=15, show_default=True,
               help='The framerate to play the video back at. Low values '
                    'improve performance.')
-@click.option('-r', '--screen-resolution', type=int, nargs=2,
+@click.option('-r', '--init-screen-res', type=int, nargs=2,
+              default=(1920, 1012),
+              show_default=True,
+              help='What resolution should the input be stretched to '
+                   'initially.')
+@click.option('-r', '--max-screen-res', type=int, nargs=2,
               default=(1920, 1080),
               show_default=True,
               help='The maximum resolution that the screen can take.')
@@ -361,14 +366,14 @@ def get_file_length(file):
               help='Disable loading and saving of the playback position.')
 @click.option('--ffmpeg-loglevel', default='warning', show_default=True,
               help="Set the loglevel of ffmpeg.")
-def main(file, speed, play_from, frame_rate, screen_resolution,
+def main(file, speed, play_from, frame_rate, init_screen_res, max_screen_res,
          speedup_silence, no_save_pos, ffmpeg_loglevel):
     VIDEO_PLAYBACK_SAVE_FILE = \
         f'{os.path.dirname(__file__)}/playback_positions.json'
     log.debug(f'Video pos save file {VIDEO_PLAYBACK_SAVE_FILE}')
     pyaudio_instance = pyaudio.PyAudio()
     pygame.init()
-    screen = pygame.display.set_mode(screen_resolution,
+    screen = pygame.display.set_mode(max_screen_res,
                                      pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE)
     pygame.display.set_caption(f'bepl {file}')
 
@@ -388,7 +393,7 @@ def main(file, speed, play_from, frame_rate, screen_resolution,
 
     cmd = {'file': file,
            'screen': screen,
-           'screen_resolution': screen_resolution,
+           'screen_resolution': init_screen_res,
            'video_resolution': input_resolution,
            'audio_sr': audio_sr,
            'frame_rate': frame_rate,
@@ -424,8 +429,8 @@ def main(file, speed, play_from, frame_rate, screen_resolution,
                 if new_cmd.got_command():
                     break
         if new_cmd.window_size:
-            screen_resolution = new_cmd.window_size
-            cmd['screen_resolution'] = screen_resolution
+            init_screen_res = new_cmd.window_size
+            cmd['screen_resolution'] = init_screen_res
         if new_cmd.speed:
             cmd['speed'] = new_cmd.speed
         if new_cmd.position_offset:
@@ -434,7 +439,7 @@ def main(file, speed, play_from, frame_rate, screen_resolution,
         if new_cmd.mouse_pos:
             zeroed = new_cmd.mouse_pos[0] - PLAYBAR_OFFSET_PIX[0]
             scaled = zeroed / (
-                    screen_resolution[0] - PLAYBAR_OFFSET_PIX[0] * 2)
+                    init_screen_res[0] - PLAYBAR_OFFSET_PIX[0] * 2)
             cmd['play_from'] = np.clip(scaled * input_length,
                                        0,
                                        input_length - 0.5)
