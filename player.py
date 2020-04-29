@@ -264,10 +264,10 @@ class AudioPlayer:
         data = (a + b).astype('float32')
 
         # Drop silence
-        if self.speedup_silence > 0 and \
-                (self.buff.peek(int(self.BLOCK_LENGTH * self.speedup_silence * self.speed)) <
+        if self.speedup_silence > 1 and \
+                (self.buff.peek(int(self.BLOCK_LENGTH * (self.speedup_silence - 1) * self.speed)) <
                  self.AUDIO_THRESHHOLD).all():
-            self.buff.advance_r(int(self.BLOCK_LENGTH * self.speedup_silence))
+            self.buff.advance_r(int(self.BLOCK_LENGTH * (self.speedup_silence - 1)))
             self.n_droped += 1
 
         return data * self.volume, pyaudio.paContinue
@@ -447,9 +447,9 @@ def get_file_length(file):
 @click.command()
 @click.argument('file',
                 type=click.Path(True, dir_okay=False, resolve_path=True))
-@click.option('-s', '--speed', type=float, default=2, show_default=True,
+@click.option('-s', '--speed', type=float, default=1.8, show_default=True,
               help='How fast to playback.')
-@click.option('-b', '--speedup-silence', default=10, type=int,
+@click.option('-b', '--silence-speedup', default=10, type=int,
               show_default=True,
               help="How much faster to play silence. This is in addition to "
                    "speedup specified with --speed.")
@@ -478,7 +478,27 @@ def get_file_length(file):
               help="Set the loglevel of ffmpeg.")
 def main(file, speed, play_from, frame_rate, volume, audio_channel,
          init_screen_res, max_screen_res,
-         speedup_silence, no_save_pos, ffmpeg_loglevel):
+         silence_speedup, no_save_pos, ffmpeg_loglevel):
+    """
+    Runtime commands
+
+        Space           Pause playback
+
+        left_arrow      Seek backwards 5 seconds
+
+        right_arrow     Seek forward 5 seconds
+
+        plus            Increase playback speed 10%
+
+        minus           Decrease playback speed 10%
+
+        mouse_click     Jump to position in timeline at mouse position
+
+        Esc             Exit the application
+    """
+    if silence_speedup < 1:
+        raise Exception(f"--silence-speedup needs to be an integer greater "
+                        f"than zero.")
     VIDEO_PLAYBACK_SAVE_FILE = \
         f'{os.path.dirname(__file__)}/playback_positions.json'
     log.debug(f'Video pos save file {VIDEO_PLAYBACK_SAVE_FILE}')
@@ -512,7 +532,7 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
            'frame_rate': frame_rate,
            'speed': speed,
            'play_from': play_from,
-           'speedup_silence': speedup_silence,
+           'speedup_silence': silence_speedup,
            'pyaudio_instance': pyaudio_instance,
            'ffmpeg_loglevel': ffmpeg_loglevel,
            'event_manager': event_manager,
