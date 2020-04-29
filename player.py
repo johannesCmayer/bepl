@@ -145,7 +145,7 @@ class EventManager:
         self.exit = True
         log.debug('Exit flag set')
 
-    def handle_events(self):
+    def handle_events(self, screen_size, stats_survace_x_size):
         events = pygame.event.get()
         play_offset = None
         pause = None
@@ -178,7 +178,8 @@ class EventManager:
                 elif event.key in [pygame.K_KP_MINUS, pygame.K_MINUS]:
                     self.speed = self.speed * 0.9
                     speed_changed = True
-            elif event.type == pygame.MOUSEBUTTONDOWN:
+            elif event.type == pygame.MOUSEBUTTONDOWN and \
+                    mouse_pos[1] > screen_size[1] - stats_survace_x_size:
                 mouse_button = True
             if event.type == pyloc.VIDEORESIZE:
                 self.last_vid_resize = event.dict['size']
@@ -283,13 +284,13 @@ def sec_to_time_str(x):
     return f'{int(h):02}:{int(m):02}:{int(s):02}'
 
 
-def get_stats_surf(playbar_offset_pix, screen_resolution, playbacktime,
+def get_stats_surf(playbar_offset_pix, x_size, screen_resolution, playbacktime,
                    total_media_length, speed, silence_speedup):
     FONT_SIZE = 20
     FONT_COLOR = (200, 200, 200)
     font = pygame.font.SysFont(None, FONT_SIZE)
 
-    x, y = screen_resolution[0], 1080 // 20
+    x, y = screen_resolution[0], x_size
     pos = screen_resolution[0] - x, screen_resolution[1] - y
     surf = pygame.Surface((x, y))
     surf.set_alpha(200)
@@ -357,7 +358,7 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
                   pyaudio_instance, audio_sr, volume, audio_channel,
                   frame_rate, speed, play_from, silence_speedup,
                   ffmpeg_loglevel, event_manager, input_length,
-                  playbar_offset_pix):
+                  playbar_offset_pix, stats_surface_x_size):
     v_width, v_height = video_resolution
     playlog.debug("Starting video stream.")
     video_stream = create_ffmpeg_video_stream(file, play_from, ffmpeg_loglevel,
@@ -379,7 +380,8 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
     curr_idx = 0
     playback_offset = 0
     while True:
-        ret = event_manager.handle_events()
+        ret = event_manager.handle_events(screen_resolution,
+                                          stats_surface_x_size)
         video_position = get_video_position(curr_idx, frame_rate, play_from)
         if video_position > input_length:
             input_length = get_file_length(file)
@@ -414,7 +416,7 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
         frame_surf = pygame.transform.scale(frame_surf, screen_resolution)
         screen.blit(frame_surf, (0, 0))
         if time.time() - event_manager.time_last_mouse_move < 2:
-            stats_surf, pos = get_stats_surf(playbar_offset_pix,
+            stats_surf, pos = get_stats_surf(playbar_offset_pix, stats_surface_x_size,
                                              screen_resolution, video_position,
                                              input_length, speed, silence_speedup)
             screen.blit(stats_surf, pos)
@@ -453,7 +455,7 @@ def get_file_length(file):
 
 
 SPEED_DEFAULT = 1.8
-SILENCE_SPEEDUP_DEFAULT = 10
+SILENCE_SPEEDUP_DEFAULT = 5
 
 @click.command()
 @click.argument('file',
@@ -515,6 +517,7 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
                         f"lead to a sound buffer underflow for some reason.")
     VIDEO_PLAYBACK_SAVE_FILE = \
         f'{os.path.dirname(__file__)}/playback_positions.json'
+    STATS_SURFACE_X_SIZE = 1080//20
     log.debug(f'Video pos save file {VIDEO_PLAYBACK_SAVE_FILE}')
     pyaudio_instance = pyaudio.PyAudio()
     pygame.init()
@@ -554,6 +557,7 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
            'playbar_offset_pix': PLAYBAR_OFFSET_PIX,
            'volume': volume,
            'audio_channel': audio_channel,
+           'stats_surface_x_size': STATS_SURFACE_X_SIZE,
            }
     while True:
         while True:
@@ -571,15 +575,17 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
                 save_playback_pos(VIDEO_PLAYBACK_SAVE_FILE, file, vid_pos)
             break
         cmd['play_from'] = vid_pos
-        if new_cmd.pause or stream_ended:
-            log.debug("Paused or stream end reached, waiting for command.")
-            while True:
-                new_cmd = event_manager.handle_events()
-                if new_cmd.got_command():
-                    break
+
         if new_cmd.window_size:
             init_screen_res = new_cmd.window_size
             cmd['screen_resolution'] = init_screen_res
+        if new_cmd.pause or stream_ended:
+            log.debug("Paused or stream end reached, waiting for command.")
+            while True:
+                new_cmd = event_manager.handle_events(cmd['screen_resolution'],
+                                                      STATS_SURFACE_X_SIZE)
+                if new_cmd.got_command():
+                    break
         if new_cmd.speed:
             if new_cmd.speed < 1:
                 log.warning(
