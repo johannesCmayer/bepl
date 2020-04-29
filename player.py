@@ -465,7 +465,7 @@ SILENCE_SPEEDUP_DEFAULT = 5
 @click.option('-b', '--silence-speedup', default=SILENCE_SPEEDUP_DEFAULT, type=int,
               show_default=True,
               help="How much faster to play silence. This is in addition to "
-                   "speedup specified with --speed.")
+                   "the speedup specified with --speed.")
 @click.option('-v', '--volume', type=float, default=1, show_default=True,
               help='Playback volume of audio.')
 @click.option('--audio-channel', type=int, default=0, show_default=True,
