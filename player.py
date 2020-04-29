@@ -33,7 +33,8 @@ class PlayArgs:
         return self.pause or self.mouse_pos or self.position_offset or \
                self.exit or self.speed or self.window_size
 
-
+# Fixme if the playbackspeed is less that one, after some time a buffer
+#  underflow exception is raised
 # TODO make it so that you can see the playbar always without resizing
 # TODO make it so that you can only scrub through the timeline when you are on it
 # TODO make it so that the sime of a point on the progressbar is displayed when
@@ -42,7 +43,6 @@ class PlayArgs:
 # TODO Make it so that you can install via pip (the executable)
 #  (use setuptools? look at click documentation)
 # TODO create tests for different file types
-# FIXME Fix audiodistortions when skipping audio
 # FIXME when reaching the end of a .ts file that is currently being written
 #  the video resets to the positon of the play_from parameter play_from_pos
 #  was invoked with. This happens when the speed is 2 and the difference
@@ -57,7 +57,7 @@ class PlayArgs:
 # NICE you can stream youtube videos
 
 # TODO Write tests for this buffer
-class UnguardedManualNumpyBuffer:
+class NumpyBuffer:
     def __init__(self, size, dtype):
         self.buffer = np.zeros(size, dtype=dtype)
         self._buffer_len = size
@@ -123,7 +123,7 @@ class UnguardedManualNumpyBuffer:
 
 
 def test_buffer():
-    b = UnguardedManualNumpyBuffer(16, np.float32)
+    b = NumpyBuffer(16, np.float32)
     for i in 100:
         arr = np.array([1,2,8])
         b.write(arr)
@@ -183,7 +183,7 @@ class EventManager:
             if event.type == pyloc.VIDEORESIZE:
                 self.last_vid_resize = event.dict['size']
                 screen_adjusted = True
-                print(f'resize: {self.last_vid_resize}')
+                log.debug(f'resize: {self.last_vid_resize}')
 
         if not screen_adjusted and self.last_vid_resize:
             window_size = self.last_vid_resize
@@ -196,20 +196,20 @@ class EventManager:
 
 
 class AudioPlayer:
-    def __init__(self, pyaudio_instance, audio_sr, speed, speedup_silence,
+    def __init__(self, pyaudio_instance, audio_sr, speed, silence_speedup,
                  file, play_from, ffmpeg_loglevel, volume, audio_channel):
         self.volume = volume
         self.pyaudio_instance = pyaudio_instance
         self.audio_sr = audio_sr
         self.speed = speed
-        self.speedup_silence = speedup_silence
+        self.silence_speedup = silence_speedup
         self.file = file
         self.play_from = play_from
         self.ffmpeg_loglevel = ffmpeg_loglevel
 
         self.BLOCK_LENGTH = 1024 * 24
         self.AUDIO_DROP_SKIP_DURATION = \
-            self.BLOCK_LENGTH / audio_sr / speed * speedup_silence / 2
+            self.BLOCK_LENGTH / audio_sr / speed * silence_speedup / 2
         self.AUDIO_THRESHHOLD = 0.1
         self.HORIZON_COEF = 4
         self.FRAME_LENGTH = \
@@ -221,7 +221,7 @@ class AudioPlayer:
         self.audio_stream = create_ffmpeg_audio_stream(
             file, play_from, ffmpeg_loglevel, audio_channel)
 
-        self.buff = UnguardedManualNumpyBuffer(self.FRAME_LENGTH * 20, np.float32)
+        self.buff = NumpyBuffer(self.FRAME_LENGTH * 20, np.float32)
         i = np.frombuffer(
             self.audio_stream.stdout.read(self.FRAME_LENGTH * 4),
             np.float32)
@@ -264,10 +264,10 @@ class AudioPlayer:
         data = (a + b).astype('float32')
 
         # Drop silence
-        if self.speedup_silence > 1 and \
-                (self.buff.peek(int(self.BLOCK_LENGTH * (self.speedup_silence - 1) * self.speed)) <
+        if self.silence_speedup > 1 and \
+                (self.buff.peek(int(self.BLOCK_LENGTH * (self.silence_speedup - 1) * self.speed)) <
                  self.AUDIO_THRESHHOLD).all():
-            self.buff.advance_r(int(self.BLOCK_LENGTH * (self.speedup_silence - 1)))
+            self.buff.advance_r(int(self.BLOCK_LENGTH * (self.silence_speedup - 1)))
             self.n_droped += 1
 
         return data * self.volume, pyaudio.paContinue
@@ -284,7 +284,7 @@ def sec_to_time_str(x):
 
 
 def get_stats_surf(playbar_offset_pix, screen_resolution, playbacktime,
-                   total_media_length, speed):
+                   total_media_length, speed, silence_speedup):
     FONT_SIZE = 20
     FONT_COLOR = (200, 200, 200)
     font = pygame.font.SysFont(None, FONT_SIZE)
@@ -320,6 +320,15 @@ def get_stats_surf(playbar_offset_pix, screen_resolution, playbacktime,
     text = font.render(f' {sec_to_time_str(total_media_length)}', True,
                        FONT_COLOR)
     surf.blit(text, (PADING, y - PADING - FONT_SIZE / 1.5))
+    # Settings
+    text = font.render(f'sp: {speed:01.2f}', True, FONT_COLOR)
+    surf.blit(text, (x - FONT_SIZE + PADING - 42, PADING))
+
+    # text = font.render(f' {speed}', True, FONT_COLOR)
+    # surf.blit(text, (x - FONT_SIZE + PADING, PADING))
+
+    text = font.render(f's-sp: {silence_speedup:01}', True, FONT_COLOR)
+    surf.blit(text, (x - FONT_SIZE + PADING - 42, y - PADING - FONT_SIZE / 1.5))
     return surf, pos
 
 
@@ -346,7 +355,7 @@ def create_ffmpeg_audio_stream(file, ss, ffmpeg_loglevel, audio_channel=0):
 
 def play_from_pos(file, screen, screen_resolution, video_resolution,
                   pyaudio_instance, audio_sr, volume, audio_channel,
-                  frame_rate, speed, play_from, speedup_silence,
+                  frame_rate, speed, play_from, silence_speedup,
                   ffmpeg_loglevel, event_manager, input_length,
                   playbar_offset_pix):
     v_width, v_height = video_resolution
@@ -355,7 +364,7 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
                                               frame_rate)
 
     audio_player = AudioPlayer(pyaudio_instance, audio_sr, speed,
-                               speedup_silence, file, play_from,
+                               silence_speedup, file, play_from,
                                ffmpeg_loglevel, volume, audio_channel)
 
     def cleanup():
@@ -407,7 +416,7 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
         if time.time() - event_manager.time_last_mouse_move < 2:
             stats_surf, pos = get_stats_surf(playbar_offset_pix,
                                              screen_resolution, video_position,
-                                             input_length, speed)
+                                             input_length, speed, silence_speedup)
             screen.blit(stats_surf, pos)
         pygame.display.flip()
 
@@ -443,13 +452,15 @@ def get_file_length(file):
         raise
 
 
+SPEED_DEFAULT = 1.8
+SILENCE_SPEEDUP_DEFAULT = 10
 
 @click.command()
 @click.argument('file',
                 type=click.Path(True, dir_okay=False, resolve_path=True))
-@click.option('-s', '--speed', type=float, default=1.8, show_default=True,
+@click.option('-s', '--speed', type=float, default=SPEED_DEFAULT, show_default=True,
               help='How fast to playback.')
-@click.option('-b', '--silence-speedup', default=10, type=int,
+@click.option('-b', '--silence-speedup', default=SILENCE_SPEEDUP_DEFAULT, type=int,
               show_default=True,
               help="How much faster to play silence. This is in addition to "
                    "speedup specified with --speed.")
@@ -464,7 +475,7 @@ def get_file_length(file):
               help='The framerate to play the video back at. Low values '
                    'improve performance.')
 @click.option('-r', '--init-screen-res', type=int, nargs=2,
-              default=(1920, 1012),
+              default=(1885, 1012),
               show_default=True,
               help='What resolution should the input be stretched to '
                    'initially.')
@@ -499,6 +510,9 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
     if silence_speedup < 1:
         raise Exception(f"--silence-speedup needs to be an integer greater "
                         f"than zero.")
+    if speed < 1:
+        raise Exception(f"speeds under 1 are not supported right now as they "
+                        f"lead to a sound buffer underflow for some reason.")
     VIDEO_PLAYBACK_SAVE_FILE = \
         f'{os.path.dirname(__file__)}/playback_positions.json'
     log.debug(f'Video pos save file {VIDEO_PLAYBACK_SAVE_FILE}')
@@ -532,7 +546,7 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
            'frame_rate': frame_rate,
            'speed': speed,
            'play_from': play_from,
-           'speedup_silence': silence_speedup,
+           'silence_speedup': silence_speedup,
            'pyaudio_instance': pyaudio_instance,
            'ffmpeg_loglevel': ffmpeg_loglevel,
            'event_manager': event_manager,
@@ -545,7 +559,6 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
         while True:
             stream_ended, vid_pos, new_cmd = play_from_pos(**cmd)
             n_input_length = get_file_length(file)
-            print(1)
             if not stream_ended or input_length == n_input_length:
                 input_length = n_input_length
                 cmd['input_length'] = input_length
@@ -553,8 +566,6 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
             else:
                 input_length = n_input_length
                 cmd['input_length'] = input_length
-
-        print(2)
         if new_cmd.exit:
             if not no_save_pos:
                 save_playback_pos(VIDEO_PLAYBACK_SAVE_FILE, file, vid_pos)
@@ -570,7 +581,13 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
             init_screen_res = new_cmd.window_size
             cmd['screen_resolution'] = init_screen_res
         if new_cmd.speed:
-            cmd['speed'] = new_cmd.speed
+            if new_cmd.speed < 1:
+                log.warning(
+                    f"Speeds under 1 are not supported right now as they "
+                    f"lead to a sound buffer underflow for some reason.")
+                cmd['speed'] = 1
+            else:
+                cmd['speed'] = new_cmd.speed
         if new_cmd.position_offset:
             cmd['play_from'] = \
                 np.clip(vid_pos + new_cmd.position_offset, 0, input_length)
