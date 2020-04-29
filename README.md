@@ -1,5 +1,5 @@
 # bepl
-A simple video player with speed control that skips silence. Run with ```python player.py``` in the correct environment.
+bepl is a video player with speed control that skips silence. Run with ```python player.py``` in the correct environment.
 
 If there is silence in the video that part will be played back faster at a faster rate. This is additional and can be run in parrallel with speeding up the non-silent parts in the video.
 
