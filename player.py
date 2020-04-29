@@ -145,8 +145,6 @@ class AudioPlayer:
             stream_callback=self._callback_ff
         )
         playlog.debug('Audioplayer started')
-        self.last_played = np.zeros(self.BLOCK_LENGTH)
-        self.last_played_unprocessed = np.zeros(self.BLOCK_LENGTH)
 
     def _callback_ff(self, in_data, frame_count, time_info, status):
         while len(self.buffer) < self.speedup_silence + 6:
@@ -165,66 +163,30 @@ class AudioPlayer:
                     x = self.buffer.pop(1)
                 self.n_droped += 1
 
-        SM = 'window_post'
         if self.speed == 1:
             data = self.buffer.pop(0)
         elif self.speed == 2:
-            if SM == 'naive':
-                x1 = self.buffer.pop(0)
-                x2 = self.buffer.pop(0)
-                arr = np.concatenate((x1, x2))
-                data = lr.effects.time_stretch(
-                    np.concatenate((x1, x2)), self.speed, center=False)
-                self.last_played_unprocessed = x2
-            elif SM == 'window':
-                x1 = self.buffer.pop(0)
-                x2 = self.buffer.pop(0)
-                data = lr.effects.time_stretch(
-                    np.concatenate((self.last_played_unprocessed, x1, x2)),
-                    self.speed, center=False)
-                data = data[self.BLOCK_LENGTH//2:int(self.BLOCK_LENGTH*1.5)]
-                self.last_played_unprocessed = x2
-            #TODO Test that this code works
-            # Remove unneccesary code
-            # Apply the same fix for audio distortions created through cutting silence
-            # Enable to make the speedup a float value
-            elif SM == 'window_post':
-                l1 = self.buffer.pop(0)
-                l2 = self.buffer.pop(0)
-                x1 = self.buffer[0]
-                x2 = self.buffer[1]
-                x3 = self.buffer[2]
-                x4 = self.buffer[3]
-                arr1 = np.concatenate((l1, l2, x1, x2))
-                arr2 = np.concatenate((x1, x2, x3, x4))
-                data1 = lr.effects.time_stretch(
-                    arr1, self.speed, center=False)
-                data2 = lr.effects.time_stretch(
-                    arr2, self.speed, center=False)
-                d1 = np.concatenate((data1, np.zeros(self.BLOCK_LENGTH * 2)))
-                # d2 = np.concatenate((np.zeros(self.BLOCK_LENGTH * 2), data2))
-                data2[:self.BLOCK_LENGTH] = data2[:self.BLOCK_LENGTH] * np.linspace(0,1, self.BLOCK_LENGTH) + data1[self.BLOCK_LENGTH:] * np.linspace(1,0, self.BLOCK_LENGTH)
-                data = data2[:self.BLOCK_LENGTH]
-
-                print(data1)
-                print(len(data1)//2 == len(arr1))
-                # print((d1[:self.BLOCK_LENGTH] == data1[:self.BLOCK_LENGTH]).all())
-                # print(d1[:self.BLOCK_LENGTH])
-                data = np.array(d1[:self.BLOCK_LENGTH])
-                # data = d1[self.BLOCK_LENGTH//2:int(self.BLOCK_LENGTH*1.5)]
-                self.last_played_unprocessed = x2
-            else:
-                raise Exception(f"Invalid speedup method {SM}")
+            # TODO Enable to make the speedup a float value
+            l1 = self.buffer.pop(0)
+            l2 = self.buffer.pop(0)
+            x1 = self.buffer[0]
+            x2 = self.buffer[1]
+            x3 = self.buffer[2]
+            x4 = self.buffer[3]
+            arr1 = np.concatenate((l1, l2, x1, x2))
+            arr2 = np.concatenate((x1, x2, x3, x4))
+            data1 = lr.effects.time_stretch(
+                arr1, self.speed, center=False)
+            data2 = lr.effects.time_stretch(
+                arr2, self.speed, center=False)
+            d1 = np.concatenate((data1, np.zeros(self.BLOCK_LENGTH * 2)))
+            # d2 = np.concatenate((np.zeros(self.BLOCK_LENGTH * 2), data2))
+            data2[:self.BLOCK_LENGTH] = \
+                data2[:self.BLOCK_LENGTH] * np.linspace(0,1, self.BLOCK_LENGTH) \
+                + data1[self.BLOCK_LENGTH:] * np.linspace(1,0, self.BLOCK_LENGTH)
+            data = data2[:self.BLOCK_LENGTH]
         else:
             raise Exception("Only 2 and 1 are currently supported speeds.")
-        self.last_played = data
-        # print(data)
-        # cutOff = 1000 # Cutoff frequency
-        # nyq = 0.5 * sf
-        # N  = 6    # Filter order
-        # fc = cutOff / nyq # Cutoff frequency normal
-        # b, a = signal.butter(N, fc)
-        # data = np.clip(data, -0.3, 0.3)
         return data, pyaudio.paContinue
 
     def close(self):
