@@ -73,6 +73,8 @@ class UnguardedManualNumpyBuffer:
     def fill_level(self, value):
         if value > self._buffer_len:
             raise Exception("Buffer overflow")
+        if value < 0:
+            raise Exception("Buffer underflow")
         self._fill_level = value
 
     def peek(self, n):
@@ -207,7 +209,7 @@ class AudioPlayer:
 
         self.BLOCK_LENGTH = 1024 * 24
         self.AUDIO_DROP_SKIP_DURATION = \
-            self.BLOCK_LENGTH / audio_sr / speed * speedup_silence
+            self.BLOCK_LENGTH / audio_sr / speed * speedup_silence / 2
         self.AUDIO_THRESHHOLD = 0.1
         self.HORIZON_COEF = 4
         self.FRAME_LENGTH = \
@@ -219,7 +221,7 @@ class AudioPlayer:
         self.audio_stream = create_ffmpeg_audio_stream(
             file, play_from, ffmpeg_loglevel, audio_channel)
 
-        self.buff = UnguardedManualNumpyBuffer(self.FRAME_LENGTH * 4, np.float32)
+        self.buff = UnguardedManualNumpyBuffer(self.FRAME_LENGTH * 20, np.float32)
         i = np.frombuffer(
             self.audio_stream.stdout.read(self.FRAME_LENGTH * 4),
             np.float32)
@@ -237,9 +239,11 @@ class AudioPlayer:
 
     def _callback_ff(self, in_data, frame_count, time_info, status):
         while self.buff.fill_level < self.FRAME_LENGTH * 2:
-            i = np.frombuffer(
-                self.audio_stream.stdout.read(self.ADVANCE_LENGTH * 4),
-                np.float32)
+            s = self.audio_stream.stdout.read(self.ADVANCE_LENGTH * 4)
+            if len(s) == 0:
+                playlog.debug("Audiostream end reached")
+                return None, pyaudio.paComplete
+            i = np.frombuffer(s, np.float32)
             self.buff.write(i)
 
         frame_1 = self.buff.peek(self.FRAME_LENGTH)
@@ -263,8 +267,8 @@ class AudioPlayer:
         if self.speedup_silence > 0 and \
                 (self.buff.peek(int(self.BLOCK_LENGTH * self.speedup_silence * self.speed)) <
                  self.AUDIO_THRESHHOLD).all():
-            self.buff.advance_r(int(self.BLOCK_LENGTH * self.speedup_silence * self.speed))
-            self.n_droped += self.speedup_silence
+            self.buff.advance_r(int(self.BLOCK_LENGTH * self.speedup_silence))
+            self.n_droped += 1
 
         return data * self.volume, pyaudio.paContinue
 
@@ -387,7 +391,7 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
         in_bytes = video_stream.stdout.read(v_width * v_height * 3)
         curr_idx += 1
         if len(in_bytes) == 0:
-            playlog.info("Steam empty, stopping playback")
+            playlog.info("Video steam empty, stopping playback")
             cleanup()
             return True, video_position, ret
         in_frame = (
@@ -521,6 +525,7 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
         while True:
             stream_ended, vid_pos, new_cmd = play_from_pos(**cmd)
             n_input_length = get_file_length(file)
+            print(1)
             if not stream_ended or input_length == n_input_length:
                 input_length = n_input_length
                 cmd['input_length'] = input_length
@@ -529,12 +534,14 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
                 input_length = n_input_length
                 cmd['input_length'] = input_length
 
+        print(2)
         if new_cmd.exit:
             if not no_save_pos:
                 save_playback_pos(VIDEO_PLAYBACK_SAVE_FILE, file, vid_pos)
             break
         cmd['play_from'] = vid_pos
-        if new_cmd.pause:
+        if new_cmd.pause or stream_ended:
+            log.debug("Paused or stream end reached, waiting for command.")
             while True:
                 new_cmd = event_manager.handle_events()
                 if new_cmd.got_command():
