@@ -32,8 +32,8 @@ Usage: player.py [OPTIONS] FILE
 Options:
   -s, --speed FLOAT               How fast to playback.  [default: 1.8]
   -b, --silence-speedup INTEGER   How much faster to play silence. This is in
-                                  addition to speedup specified with --speed.
-                                  [default: 10]
+                                  addition to the speedup specified with --speed.
+                                  [default: 5]
 
   -v, --volume FLOAT              Playback volume of audio.  [default: 1]
   --audio-channel INTEGER         The audio channel to play back.  [default:
