@@ -59,26 +59,37 @@ class PlayArgs:
 # TODO Write tests for this buffer
 class UnguardedManualNumpyBuffer:
     def __init__(self, size, dtype):
-        self._buffer = np.zeros(size, dtype=dtype)
+        self.buffer = np.zeros(size, dtype=dtype)
         self._buffer_len = size
         self._write_idx = 0
         self._read_idx = 0
+        self._fill_level = 0
+
+    @property
+    def fill_level(self):
+        return self._fill_level
+
+    @fill_level.setter
+    def fill_level(self, value):
+        if value > self._buffer_len:
+            raise Exception("Buffer overflow")
+        self._fill_level = value
 
     def peek(self, n):
         if n > self._buffer_len * 2:
             raise Exception("Can't read more than twice the buffer size.")
         rem = self._remaining_read_capacity()
         if n <= rem:
-            return self._buffer[self._read_idx:n + self._read_idx]
+            return self.buffer[self._read_idx:n + self._read_idx]
         else:
             rem_n = n - rem
-            a = self._buffer[self._read_idx:]
-            b = self._buffer[:rem_n]
+            a = self.buffer[self._read_idx:]
+            b = self.buffer[:rem_n]
             return np.concatenate((a, b))
 
     def read(self, n):
         r = self.peek(n)
-        self._advance_r(n)
+        self.advance_r(n)
         return r
 
     def write(self, arr):
@@ -86,12 +97,12 @@ class UnguardedManualNumpyBuffer:
             raise Exception("Can't write more than twice the buffer size.")
         arr_len = len(arr)
         if arr_len <= (self._buffer_len - self._write_idx):
-            self._buffer[self._write_idx:self._write_idx + arr_len] = arr
+            self.buffer[self._write_idx:self._write_idx + arr_len] = arr
         else:
             rem = self._remaining_write_capacity()
-            self._buffer[self._write_idx:] = arr[:rem]
+            self.buffer[self._write_idx:] = arr[:rem]
             rem_a = len(arr) - rem
-            self._buffer[:rem_a] = arr[rem:]
+            self.buffer[:rem_a] = arr[rem:]
         self._advance_w(arr_len)
 
     def _remaining_write_capacity(self):
@@ -101,9 +112,11 @@ class UnguardedManualNumpyBuffer:
         return self._buffer_len - self._read_idx
 
     def _advance_w(self, x):
+        self.fill_level += x
         self._write_idx = (self._write_idx + x) % self._buffer_len
 
-    def _advance_r(self, x):
+    def advance_r(self, x):
+        self.fill_level -= x
         self._read_idx = (self._read_idx + x) % self._buffer_len
 
 
@@ -117,13 +130,14 @@ def test_buffer():
 
 
 class EventManager:
-    def __init__(self):
+    def __init__(self, speed):
         signal.signal(signal.SIGINT, self.set_exit)
         signal.signal(signal.SIGTERM, self.set_exit)
         self.exit = None
         self.time_last_mouse_move = 0
         self.last_mouse_pos = None
         self.last_vid_resize = None
+        self.speed = speed
 
     def set_exit(self, signum, frame):
         self.exit = True
@@ -133,7 +147,7 @@ class EventManager:
         events = pygame.event.get()
         play_offset = None
         pause = None
-        speed = None
+        speed_changed = False
         window_size = None
         mouse_button = None
         screen_adjusted = False
@@ -157,9 +171,11 @@ class EventManager:
                 elif event.key == pygame.K_RIGHT:
                     play_offset = 5
                 elif event.key in [pygame.K_KP_PLUS, pygame.K_PLUS]:
-                    speed = 2
+                    self.speed = self.speed * 1.1
+                    speed_changed = True
                 elif event.key in [pygame.K_KP_MINUS, pygame.K_MINUS]:
-                    speed = 1
+                    self.speed = self.speed * 0.9
+                    speed_changed = True
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mouse_button = True
             if event.type == pyloc.VIDEORESIZE:
@@ -171,14 +187,15 @@ class EventManager:
             window_size = self.last_vid_resize
             self.last_vid_resize = None
         pygame.display.flip()
-        return PlayArgs(mouse_pos if mouse_button else None, play_offset,
-                        window_size, speed, pause,
+        speed = self.speed if speed_changed else None
+        mouse_pos = mouse_pos if mouse_button else None
+        return PlayArgs(mouse_pos, play_offset, window_size, speed, pause,
                         self.exit)
 
 
 class AudioPlayer:
     def __init__(self, pyaudio_instance, audio_sr, speed, speedup_silence,
-                 file, play_from, ffmpeg_loglevel, volume):
+                 file, play_from, ffmpeg_loglevel, volume, audio_channel):
         self.volume = volume
         self.pyaudio_instance = pyaudio_instance
         self.audio_sr = audio_sr
@@ -188,20 +205,26 @@ class AudioPlayer:
         self.play_from = play_from
         self.ffmpeg_loglevel = ffmpeg_loglevel
 
-        self.BLOCK_LENGTH = 1024 * 12
+        self.BLOCK_LENGTH = 1024 * 24
         self.AUDIO_DROP_SKIP_DURATION = \
-            self.BLOCK_LENGTH / audio_sr / speed * speedup_silence / 2
+            self.BLOCK_LENGTH / audio_sr / speed * speedup_silence
         self.AUDIO_THRESHHOLD = 0.1
+        self.HORIZON_COEF = 4
+        self.FRAME_LENGTH = \
+            int(self.BLOCK_LENGTH * self.HORIZON_COEF * self.speed)
+        self.ADVANCE_LENGTH = int(self.BLOCK_LENGTH * self.speed)
 
         self.n_droped = 0
 
-        self.buff = UnguardedManualNumpyBuffer(self.BLOCK_LENGTH * 100, np.float32)
-        self.first_callback = True
-        self.last_item = None
+        self.audio_stream = create_ffmpeg_audio_stream(
+            file, play_from, ffmpeg_loglevel, audio_channel)
 
-        self.audio_stream = create_ffmpeg_audio_stream(file, play_from,
-                                                       ffmpeg_loglevel)
-        # self._callback_ff(None, None, None, None) # FIXME
+        self.buff = UnguardedManualNumpyBuffer(self.FRAME_LENGTH * 4, np.float32)
+        i = np.frombuffer(
+            self.audio_stream.stdout.read(self.FRAME_LENGTH * 4),
+            np.float32)
+        self.buff.write(i)
+
         self.audio_out_stream = pyaudio_instance.open(
             format=pyaudio.paFloat32,
             channels=1,
@@ -212,28 +235,16 @@ class AudioPlayer:
         )
         playlog.debug('Audioplayer started')
 
-
-
     def _callback_ff(self, in_data, frame_count, time_info, status):
-        print('ff')
-        HORIZON_COEF = 4
-        frame_length = int(self.BLOCK_LENGTH * HORIZON_COEF * self.speed)
-        advance_length = int(self.BLOCK_LENGTH * self.speed)
-        if self.first_callback:
-            self.first_callback = False
+        while self.buff.fill_level < self.FRAME_LENGTH * 2:
             i = np.frombuffer(
-                self.audio_stream.stdout.read((frame_length + advance_length) * 4),
-                np.float32)
-            self.buff.write(i)
-        else:
-            i = np.frombuffer(
-                self.audio_stream.stdout.read(advance_length * 4),
+                self.audio_stream.stdout.read(self.ADVANCE_LENGTH * 4),
                 np.float32)
             self.buff.write(i)
 
-        frame_1 = self.buff.peek(frame_length)
-        self.buff._advance_r(advance_length)
-        frame_2 = self.buff.peek(frame_length)
+        frame_1 = self.buff.peek(self.FRAME_LENGTH)
+        self.buff.advance_r(self.ADVANCE_LENGTH)
+        frame_2 = self.buff.peek(self.FRAME_LENGTH)
 
         data1 = lr.effects.time_stretch(
             frame_1, self.speed, center=False)
@@ -248,12 +259,12 @@ class AudioPlayer:
         b = b1 * b2
         data = (a + b).astype('float32')
 
-        # if self.speedup_silence != 0:
-        #     max_values = np.array([np.max(np.abs(x)) for x in self.buffer])
-        #     if (max_values < self.AUDIO_THRESHHOLD).all():
-        #         for _ in range(self.speedup_silence):
-        #             x = self.buffer.pop(1)
-        #         self.n_droped += 1
+        # Drop silence
+        if self.speedup_silence > 0 and \
+                (self.buff.peek(int(self.BLOCK_LENGTH * self.speedup_silence * self.speed)) <
+                 self.AUDIO_THRESHHOLD).all():
+            self.buff.advance_r(int(self.BLOCK_LENGTH * self.speedup_silence * self.speed))
+            self.n_droped += self.speedup_silence
 
         return data * self.volume, pyaudio.paContinue
 
@@ -318,18 +329,19 @@ def create_ffmpeg_video_stream(file, ss, ffmpeg_loglevel, frame_rate):
     return read_proc
 
 
-def create_ffmpeg_audio_stream(file, ss, ffmpeg_loglevel):
+def create_ffmpeg_audio_stream(file, ss, ffmpeg_loglevel, audio_channel=0):
     read_proc = (
         ffmpeg
             .input(file, ss=ss, loglevel=ffmpeg_loglevel)
-            .output('pipe:', format='f32le', acodec='pcm_f32le')
+            .output('pipe:', format='f32le', acodec='pcm_f32le',
+                    map=f'0:a:{audio_channel}')
             .run_async(pipe_stdout=True)
     )
     return read_proc
 
 
 def play_from_pos(file, screen, screen_resolution, video_resolution,
-                  pyaudio_instance, audio_sr, volume,
+                  pyaudio_instance, audio_sr, volume, audio_channel,
                   frame_rate, speed, play_from, speedup_silence,
                   ffmpeg_loglevel, event_manager, input_length,
                   playbar_offset_pix):
@@ -340,7 +352,7 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
 
     audio_player = AudioPlayer(pyaudio_instance, audio_sr, speed,
                                speedup_silence, file, play_from,
-                               ffmpeg_loglevel, volume)
+                               ffmpeg_loglevel, volume, audio_channel)
 
     def cleanup():
         audio_player.close()
@@ -439,6 +451,8 @@ def get_file_length(file):
                    "speedup specified with --speed.")
 @click.option('-v', '--volume', type=float, default=1, show_default=True,
               help='Playback volume of audio.')
+@click.option('--audio-channel', type=int, default=0, show_default=True,
+              help='The audio channel to play back.')
 @click.option('--play-from', type=int, default=None, show_default=True,
               help='Where to start playback in seconds. Overwrites loaded '
                    'playback location.')
@@ -458,7 +472,8 @@ def get_file_length(file):
               help='Disable loading and saving of the playback position.')
 @click.option('--ffmpeg-loglevel', default='warning', show_default=True,
               help="Set the loglevel of ffmpeg.")
-def main(file, speed, play_from, frame_rate, volume, init_screen_res, max_screen_res,
+def main(file, speed, play_from, frame_rate, volume, audio_channel,
+         init_screen_res, max_screen_res,
          speedup_silence, no_save_pos, ffmpeg_loglevel):
     VIDEO_PLAYBACK_SAVE_FILE = \
         f'{os.path.dirname(__file__)}/playback_positions.json'
@@ -476,12 +491,14 @@ def main(file, speed, play_from, frame_rate, volume, init_screen_res, max_screen
     input_length = get_file_length(file)
     n_input_length = None
 
+    if not play_from:
+        play_from = 0
     if not play_from and not no_save_pos:
         play_from = load_playback_pos(VIDEO_PLAYBACK_SAVE_FILE, file)
 
     PLAYBAR_OFFSET_PIX = (70, 10)
 
-    event_manager = EventManager()
+    event_manager = EventManager(speed)
 
     cmd = {'file': file,
            'screen': screen,
@@ -498,6 +515,7 @@ def main(file, speed, play_from, frame_rate, volume, init_screen_res, max_screen
            'input_length': input_length,
            'playbar_offset_pix': PLAYBAR_OFFSET_PIX,
            'volume': volume,
+           'audio_channel': audio_channel,
            }
     while True:
         while True:
