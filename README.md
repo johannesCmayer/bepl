@@ -13,11 +13,31 @@ The player is very resource intensive. Performance issues might be resolved by l
 ```
 Usage: player.py [OPTIONS] FILE
 
+  Runtime commands
+
+      Space           Pause playback
+
+      left_arrow      Seek backwards 5 seconds
+
+      right_arrow     Seek forward 5 seconds
+
+      plus            Increase playback speed 10%
+
+      minus           Decrease playback speed 10%
+
+      mouse_click     Jump to position in timeline at mouse position
+
+      Esc             Exit the application
+
 Options:
-  -s, --speed FLOAT               How fast to playback.  [default: 2]
-  -b, --speedup-silence INTEGER   How much faster to play silence. This is in
+  -s, --speed FLOAT               How fast to playback.  [default: 1.8]
+  -b, --silence-speedup INTEGER   How much faster to play silence. This is in
                                   addition to speedup specified with --speed.
                                   [default: 10]
+
+  -v, --volume FLOAT              Playback volume of audio.  [default: 1]
+  --audio-channel INTEGER         The audio channel to play back.  [default:
+                                  0]
 
   --play-from INTEGER             Where to start playback in seconds.
                                   Overwrites loaded playback location.
@@ -27,7 +47,7 @@ Options:
 
   -r, --init-screen-res INTEGER...
                                   What resolution should the input be
-                                  stretched to initially.  [default: 1920,
+                                  stretched to initially.  [default: 1885,
                                   1012]
 
   -r, --max-screen-res INTEGER...
