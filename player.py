@@ -33,8 +33,10 @@ class PlayArgs:
         return self.pause or self.mouse_pos or self.position_offset or \
                self.exit or self.speed or self.window_size
 
+# TODO put video playback into seperate process to reduce lag
 # Fixme if the playbackspeed is less that one, after some time a buffer
 #  underflow exception is raised
+# TODO create fadein fadeout effect for stats bar
 # TODO make it so that you can see the playbar always without resizing
 # TODO make it so that you can only scrub through the timeline when you are on it
 # TODO make it so that the sime of a point on the progressbar is displayed when
@@ -54,6 +56,8 @@ class PlayArgs:
 # IFNEEDED create audio syncpoints. Prestart new audio and video streams
 #  (or only one of them) and then switch to them at a specific sync point
 #  (some point in time)
+# IFNEEDED reimplement the simple unbuffered speedup procedures
+#  (because they run faster and do not lag)
 # NICE you can stream youtube videos
 
 # TODO Write tests for this buffer
