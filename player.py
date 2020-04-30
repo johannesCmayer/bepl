@@ -20,8 +20,9 @@ playlog = log.getChild('playback')
 
 
 class PlayArgs:
-    def __init__(self, mouse_pos, position_offset, window_size, speed, pause,
-                 exit):
+    def __init__(self, mouse_pos, position_offset, window_size, speed,
+                 normal_speed, pause, exit):
+        self.normal_speed = normal_speed
         self.window_size = window_size
         self.speed = speed
         self.exit = exit
@@ -31,7 +32,7 @@ class PlayArgs:
 
     def got_command(self):
         return self.pause or self.mouse_pos or self.position_offset or \
-               self.exit or self.speed or self.window_size
+               self.exit or self.speed or self.window_size or self.normal_speed
 
 # TODO put video playback into seperate process to reduce lag
 # Fixme if the playbackspeed is less that one, after some time a buffer
@@ -157,6 +158,7 @@ class EventManager:
         window_size = None
         mouse_button_on_stats_surf = None
         screen_adjusted = False
+        normal_speed = False
         mouse_pos = pygame.mouse.get_pos()
         if mouse_pos != self.last_mouse_pos:
             self.last_mouse_pos = mouse_pos
@@ -182,6 +184,8 @@ class EventManager:
                 elif event.key in [pygame.K_KP_MINUS, pygame.K_MINUS]:
                     self.speed = self.speed * 0.9
                     speed_changed = True
+                elif event.key == pygame.K_r:
+                    normal_speed = True
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if mouse_pos[1] > screen_size[1] - stats_survace_x_size:
                     mouse_button_on_stats_surf = True
@@ -198,8 +202,8 @@ class EventManager:
         pygame.display.flip()
         speed = self.speed if speed_changed else None
         mouse_pos = mouse_pos if mouse_button_on_stats_surf else None
-        return PlayArgs(mouse_pos, play_offset, window_size, speed, pause,
-                        self.exit)
+        return PlayArgs(mouse_pos, play_offset, window_size,
+                        speed, normal_speed, pause, self.exit)
 
 
 class AudioPlayer:
@@ -507,11 +511,13 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
 
         right_arrow     Seek forward 5 seconds
 
+        mouse_click     Jump to position in timeline at mouse position
+
         plus            Increase playback speed 10%
 
         minus           Decrease playback speed 10%
 
-        mouse_click     Jump to position in timeline at mouse position
+        r               toogle between set speed and speed 1
 
         Esc             Exit the application
     """
@@ -600,8 +606,15 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
                     f"Speeds under 1 are not supported right now as they "
                     f"lead to a sound buffer underflow for some reason.")
                 cmd['speed'] = 1
+                speed = 1
             else:
+                speed = new_cmd.speed
                 cmd['speed'] = new_cmd.speed
+        if new_cmd.normal_speed:
+            if cmd['speed'] == 1:
+                cmd['speed'] = speed
+            else:
+                cmd['speed'] = 1
         if new_cmd.position_offset:
             cmd['play_from'] = \
                 np.clip(vid_pos + new_cmd.position_offset * cmd['speed'],
