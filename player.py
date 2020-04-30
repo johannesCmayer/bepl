@@ -35,6 +35,8 @@ class PlayArgs:
                self.exit or self.speed or self.window_size or self.normal_speed
 
 # TODO put video playback into seperate process to reduce lag
+# TODO if a command is issued always draw the stats surface for the specified
+#  ammount of time
 # Fixme if the playbackspeed is less that one, after some time a buffer
 #  underflow exception is raised
 # TODO create fadein fadeout effect for stats bar
@@ -396,6 +398,9 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
         if video_position > input_length:
             input_length = get_file_length(file)
         if ret.got_command():
+            draw_stats_surf(input_length, playbar_offset_pix, screen,
+                            screen_resolution, silence_speedup, speed,
+                            stats_surface_x_size, video_position)
             cleanup()
             return False, video_position, ret
         playback_time = time.time() - start_time + playback_offset
@@ -413,6 +418,9 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
         curr_idx += 1
         if len(in_bytes) == 0:
             playlog.info("Video steam empty, stopping playback")
+            draw_stats_surf(input_length, playbar_offset_pix, screen,
+                            screen_resolution, silence_speedup, speed,
+                            stats_surface_x_size, video_position)
             cleanup()
             return True, video_position, ret
         in_frame = (
@@ -426,13 +434,21 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
         frame_surf = pygame.transform.scale(frame_surf, screen_resolution)
         screen.blit(frame_surf, (0, 0))
         if time.time() - event_manager.time_last_mouse_move < 2:
-            stats_surf, pos = get_stats_surf(playbar_offset_pix, stats_surface_x_size,
-                                             screen_resolution, video_position,
-                                             input_length, speed, silence_speedup)
-            screen.blit(stats_surf, pos)
+            draw_stats_surf(input_length, playbar_offset_pix, screen,
+                            screen_resolution, silence_speedup, speed,
+                            stats_surface_x_size, video_position)
         pygame.display.flip()
 
     raise Exception("Invalid programm state")
+
+
+def draw_stats_surf(input_length, playbar_offset_pix, screen,
+                    screen_resolution, silence_speedup, speed,
+                    stats_surface_x_size, video_position):
+    stats_surf, pos = get_stats_surf(playbar_offset_pix, stats_surface_x_size,
+                                     screen_resolution, video_position,
+                                     input_length, speed, silence_speedup)
+    screen.blit(stats_surf, pos)
 
 
 # =============================================================================
