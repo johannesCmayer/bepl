@@ -587,6 +587,7 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
             cmd['screen_resolution'] = init_screen_res
         if new_cmd.pause or stream_ended:
             log.debug("Paused or stream end reached, waiting for command.")
+            cmd['play_from'] -= 1
             while True:
                 new_cmd = event_manager.handle_events(cmd['screen_resolution'],
                                                       STATS_SURFACE_X_SIZE)
