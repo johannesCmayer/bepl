@@ -155,7 +155,7 @@ class EventManager:
         pause = None
         speed_changed = False
         window_size = None
-        mouse_button = None
+        mouse_button_on_stats_surf = None
         screen_adjusted = False
         mouse_pos = pygame.mouse.get_pos()
         if mouse_pos != self.last_mouse_pos:
@@ -182,9 +182,11 @@ class EventManager:
                 elif event.key in [pygame.K_KP_MINUS, pygame.K_MINUS]:
                     self.speed = self.speed * 0.9
                     speed_changed = True
-            elif event.type == pygame.MOUSEBUTTONDOWN and \
-                    mouse_pos[1] > screen_size[1] - stats_survace_x_size:
-                mouse_button = True
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if mouse_pos[1] > screen_size[1] - stats_survace_x_size:
+                    mouse_button_on_stats_surf = True
+                else:
+                    pause = True
             if event.type == pyloc.VIDEORESIZE:
                 self.last_vid_resize = event.dict['size']
                 screen_adjusted = True
@@ -195,7 +197,7 @@ class EventManager:
             self.last_vid_resize = None
         pygame.display.flip()
         speed = self.speed if speed_changed else None
-        mouse_pos = mouse_pos if mouse_button else None
+        mouse_pos = mouse_pos if mouse_button_on_stats_surf else None
         return PlayArgs(mouse_pos, play_offset, window_size, speed, pause,
                         self.exit)
 
