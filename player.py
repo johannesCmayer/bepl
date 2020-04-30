@@ -524,6 +524,7 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
     VIDEO_PLAYBACK_SAVE_FILE = \
         f'{os.path.dirname(__file__)}/playback_positions.json'
     STATS_SURFACE_X_SIZE = 1080//20
+    SEEKBACK_ON_RESUME = 1
     log.debug(f'Video pos save file {VIDEO_PLAYBACK_SAVE_FILE}')
     pyaudio_instance = pyaudio.PyAudio()
     pygame.init()
@@ -587,7 +588,7 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
             cmd['screen_resolution'] = init_screen_res
         if new_cmd.pause or stream_ended:
             log.debug("Paused or stream end reached, waiting for command.")
-            cmd['play_from'] -= 1
+            cmd['play_from'] -= SEEKBACK_ON_RESUME
             while True:
                 new_cmd = event_manager.handle_events(cmd['screen_resolution'],
                                                       STATS_SURFACE_X_SIZE)
@@ -603,7 +604,9 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
                 cmd['speed'] = new_cmd.speed
         if new_cmd.position_offset:
             cmd['play_from'] = \
-                np.clip(vid_pos + new_cmd.position_offset, 0, input_length)
+                np.clip(vid_pos + new_cmd.position_offset * cmd['speed'],
+                        0,
+                        input_length - 0.5)
         if new_cmd.mouse_pos:
             zeroed = new_cmd.mouse_pos[0] - PLAYBAR_OFFSET_PIX[0]
             scaled = zeroed / (
