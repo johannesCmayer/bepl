@@ -15,19 +15,21 @@ Usage: player.py [OPTIONS] FILE
 
   Runtime commands
 
-      Space           Pause playback
+        Space           Pause playback
 
-      left_arrow      Seek backwards 5 seconds
+        left_arrow      Seek backwards 5 seconds
 
-      right_arrow     Seek forward 5 seconds
+        right_arrow     Seek forward 5 seconds
 
-      plus            Increase playback speed 10%
+        mouse_click     Jump to position in timeline at mouse position
 
-      minus           Decrease playback speed 10%
+        plus            Increase playback speed 10%
 
-      mouse_click     Jump to position in timeline at mouse position
+        minus           Decrease playback speed 10%
 
-      Esc             Exit the application
+        r               toogle between set speed and speed 1
+
+        Esc             Exit the application
 
 Options:
   -s, --speed FLOAT               How fast to playback.  [default: 1.8]
