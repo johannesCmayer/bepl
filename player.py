@@ -34,6 +34,8 @@ class PlayArgs:
         return self.pause or self.mouse_pos or self.position_offset or \
                self.exit or self.speed or self.window_size or self.normal_speed
 
+# TODO log what the mimimum and maximum time that could be required before
+#  the silence cutter can kick in based on the BLOCK_LENGTH speed etc.
 # TODO put video playback into seperate process to reduce lag
 # TODO if a command is issued always draw the stats surface for the specified
 #  ammount of time
