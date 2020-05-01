@@ -64,3 +64,7 @@ Options:
 
   --help                          Show this message and exit.
 ```
+## Similar projects
+[skip-silence](https://github.com/vantezzen/skip-silence)
+
+[jumpcutter](https://github.com/carykh/jumpcutter)
