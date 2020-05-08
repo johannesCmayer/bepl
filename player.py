@@ -21,7 +21,9 @@ playlog = log.getChild('playback')
 
 class PlayArgs:
     def __init__(self, mouse_pos, position_offset, window_size, speed,
-                 normal_speed, pause, exit):
+                 normal_speed, pause, set_bookmark, goto_bookmark, exit):
+        self.goto_bookmark = goto_bookmark
+        self.set_bookmark = set_bookmark
         self.normal_speed = normal_speed
         self.window_size = window_size
         self.speed = speed
@@ -32,7 +34,8 @@ class PlayArgs:
 
     def got_command(self):
         return self.pause or self.mouse_pos or self.position_offset or \
-               self.exit or self.speed or self.window_size or self.normal_speed
+               self.exit or self.speed or self.window_size or \
+               self.normal_speed or self.set_bookmark or self.goto_bookmark
 
 # TODO log what the mimimum and maximum time that could be required before
 #  the silence cutter can kick in based on the BLOCK_LENGTH speed etc.
@@ -163,6 +166,9 @@ class EventManager:
         mouse_button_on_stats_surf = None
         screen_adjusted = False
         normal_speed = False
+        set_bookmark = None
+        goto_bookmark = None
+        b = None
         mouse_pos = pygame.mouse.get_pos()
         if mouse_pos != self.last_mouse_pos:
             self.last_mouse_pos = mouse_pos
@@ -190,6 +196,21 @@ class EventManager:
                     speed_changed = True
                 elif event.key == pygame.K_r:
                     normal_speed = True
+                if event.key == pygame.K_0: b = 0
+                if event.key == pygame.K_1: b = 1
+                if event.key == pygame.K_2: b = 2
+                if event.key == pygame.K_3: b = 3
+                if event.key == pygame.K_4: b = 4
+                if event.key == pygame.K_5: b = 5
+                if event.key == pygame.K_6: b = 6
+                if event.key == pygame.K_7: b = 7
+                if event.key == pygame.K_8: b = 8
+                if event.key == pygame.K_9: b = 9
+            if b:
+                if pygame.key.get_mods() & pygame.KMOD_CTRL:
+                    set_bookmark = 1
+                else:
+                    goto_bookmark = 1
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if mouse_pos[1] > screen_size[1] - stats_survace_x_size:
                     mouse_button_on_stats_surf = True
@@ -207,7 +228,8 @@ class EventManager:
         speed = self.speed if speed_changed else None
         mouse_pos = mouse_pos if mouse_button_on_stats_surf else None
         return PlayArgs(mouse_pos, play_offset, window_size,
-                        speed, normal_speed, pause, self.exit)
+                        speed, normal_speed, pause, set_bookmark,
+                        goto_bookmark, self.exit)
 
 
 class AudioPlayer:
@@ -250,6 +272,7 @@ class AudioPlayer:
             output=True,
             stream_callback=self._callback_ff
         )
+        self.first_callback = True
         playlog.debug('Audioplayer started')
 
     def _callback_ff(self, in_data, frame_count, time_info, status):
@@ -285,7 +308,12 @@ class AudioPlayer:
             self.buff.advance_r(int(self.BLOCK_LENGTH * (self.silence_speedup - 1)))
             self.n_droped += 1
 
-        return data * self.volume, pyaudio.paContinue
+        if self.first_callback:
+            self.first_callback = False
+            data = (data * self.volume * np.linspace(0, 1, self.BLOCK_LENGTH)).astype('float32')
+            return data, pyaudio.paContinue
+        else:
+            return data * self.volume, pyaudio.paContinue
 
     def close(self):
         self.audio_out_stream.close()
@@ -614,6 +642,7 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
             log.debug("Paused or stream end reached, waiting for command.")
             cmd['play_from'] -= SEEKBACK_ON_RESUME
             while True:
+                time.sleep(0.1)
                 new_cmd = event_manager.handle_events(cmd['screen_resolution'],
                                                       STATS_SURFACE_X_SIZE)
                 if new_cmd.got_command():
@@ -648,6 +677,14 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
 
     pyaudio_instance.terminate()
     pygame.display.quit()
+
+#TODO implement bookmarking
+def save_playback_position():
+    pass
+
+
+def load_playback_position():
+    pass
 
 
 def load_playback_pos(save_file, video_file, seek_back=2):
