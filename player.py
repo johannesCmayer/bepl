@@ -273,6 +273,8 @@ class AudioPlayer:
             stream_callback=self._callback_ff
         )
         self.first_callback = True
+        self.trigger_last_write = False
+        self.last_write_triggered = False
         playlog.debug('Audioplayer started')
 
     def _callback_ff(self, in_data, frame_count, time_info, status):
@@ -312,10 +314,16 @@ class AudioPlayer:
             self.first_callback = False
             data = (data * self.volume * np.linspace(0, 1, self.BLOCK_LENGTH)).astype('float32')
             return data, pyaudio.paContinue
+        elif self.trigger_last_write:
+            data = (data * self.volume * np.linspace(1, 0, self.BLOCK_LENGTH)).astype( 'float32')
+            self.last_write_triggered = True
+            return data, pyaudio.paComplete
         else:
             return data * self.volume, pyaudio.paContinue
 
     def close(self):
+        self.trigger_last_write = True
+        time.sleep(0.3)
         self.audio_out_stream.close()
         self.audio_stream.kill()
 
