@@ -443,7 +443,7 @@ def play_from_pos(file, screen, screen_resolution, video_resolution,
             return False, video_position, ret
         playback_time = time.time() - start_time + playback_offset
         playback_offset += audio_player.AUDIO_DROP_SKIP_DURATION * \
-                           audio_player.n_droped
+                           (audio_player.n_droped * VIDEO_SKIP_COEF)
         audio_player.n_droped = 0
 
         frame_idx = int(playback_time * frame_rate * speed)
@@ -721,4 +721,5 @@ def save_playback_pos(save_file, video_file, vid_pos):
 
 
 if __name__ == '__main__':
+    VIDEO_SKIP_COEF = 0.85
     main()
