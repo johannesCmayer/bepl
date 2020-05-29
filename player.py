@@ -177,7 +177,9 @@ class EventManager:
         else:
             self.mouse_moved = False
         ctrl_down = pygame.key.get_mods() & pygame.KMOD_CTRL
+        shift_down = pygame.key.get_mods() & pygame.KMOD_SHIFT
         jump_coef = 2 if ctrl_down else 1
+        jump_coef *= 0.5 if shift_down else 1
         for event in events:
             if event.type == pyloc.QUIT:
                 self.set_exit(None, None)
