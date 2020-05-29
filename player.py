@@ -176,6 +176,8 @@ class EventManager:
             self.mouse_moved = True
         else:
             self.mouse_moved = False
+        ctrl_down = pygame.key.get_mods() & pygame.KMOD_CTRL
+        jump_coef = 2 if ctrl_down else 1
         for event in events:
             if event.type == pyloc.QUIT:
                 self.set_exit(None, None)
@@ -185,9 +187,9 @@ class EventManager:
                 elif event.key == pygame.K_SPACE:
                     pause = True
                 elif event.key == pygame.K_LEFT:
-                    play_offset = -5
+                    play_offset = -10 * self.speed * jump_coef
                 elif event.key == pygame.K_RIGHT:
-                    play_offset = 5
+                    play_offset = 10 * self.speed * jump_coef
                 elif event.key in [pygame.K_KP_PLUS, pygame.K_PLUS]:
                     self.speed = self.speed * 1.1
                     speed_changed = True
@@ -672,7 +674,7 @@ def main(file, speed, play_from, frame_rate, volume, audio_channel,
                 cmd['speed'] = 1
         if new_cmd.position_offset:
             cmd['play_from'] = \
-                np.clip(vid_pos + new_cmd.position_offset * cmd['speed'],
+                np.clip(vid_pos + new_cmd.position_offset,
                         0,
                         input_length - 0.5)
         if new_cmd.mouse_pos:
@@ -721,5 +723,5 @@ def save_playback_pos(save_file, video_file, vid_pos):
 
 
 if __name__ == '__main__':
-    VIDEO_SKIP_COEF = 0.85
+    VIDEO_SKIP_COEF = 0.75
     main()
