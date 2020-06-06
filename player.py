@@ -725,5 +725,5 @@ def save_playback_pos(save_file, video_file, vid_pos):
 
 
 if __name__ == '__main__':
-    VIDEO_SKIP_COEF = 0.75
+    VIDEO_SKIP_COEF = 0.8
     main()
