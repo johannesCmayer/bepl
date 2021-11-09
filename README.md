@@ -1,13 +1,13 @@
 # bepl
-**bepl** is a video player written in python with speed control that skips silence. Run with ```python player.py``` in the correct environment (see requirements.txt [pip] or environment.yml [conda]).
+**bepl** is a video player written in python with speed control that skips silence. Run with `python player.py` in the correct environment (see requirements.txt [pip] or environment.yml [conda]).
 
-If there is silence in the video that part will be played back at a faster rate. This is in addition to a speedup you can set for the the non-silent parts in the video.
+If there is silence in the video that part will be played back at a faster rate. This is in addition to a speedup you can set for the non-silent parts in the video.
 
-By default the player saves the playback position of videos and resumes at the saved possition.
+By default, the player saves the playback position of videos and resumes at the saved position.
 
 This player can read transport stream (ts) files while they are being written and should be able to read all video file formats that are supported by ffmpeg.
 
-The player is very resource intensive. Performance issues might be resolved by lowering the playback framerate.
+The player is very resource-intensive. Performance issues might be resolved by lowering the playback framerate.
 
 ## Command line help
 ```
@@ -17,7 +17,7 @@ Usage: player.py [OPTIONS] FILE
 
         Space           Pause playback
 
-        left_arrow      Seek backwards 5 seconds
+        left_arrow      Seek backward 5 seconds
 
         right_arrow     Seek forward 5 seconds
 
@@ -27,7 +27,7 @@ Usage: player.py [OPTIONS] FILE
 
         minus           Decrease playback speed 10%
 
-        r               toogle between set speed and speed 1
+        r               toggle between set speed and speed 1
 
         Esc             Exit the application
 
